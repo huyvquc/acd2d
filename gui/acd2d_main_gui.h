@@ -46,6 +46,7 @@ bool   g_showGL;
 bool   g_saveDecomposition;
 bool   g_savePS;
 bool   g_outputCuts;
+bool   g_showIRIS;
 
 ///////////////////////////////////////////////////////////////////////
 // additional global data

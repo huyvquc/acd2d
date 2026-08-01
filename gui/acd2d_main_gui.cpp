@@ -29,8 +29,9 @@ bool parseARG(int argc, char ** argv)
                 case 's': g_saveDecomposition=true; break;
                 case 'p': g_savePS=true; break;
                 case 'c': g_outputCuts=true; break;
+                case 'i': g_showIRIS=true; break;
                 default:
-                    //simply ignore....
+                    if(string(argv[i])=="-iris") g_showIRIS=true;
                     break;
             }
         }
@@ -72,6 +73,7 @@ int main( int argc, char ** argv)
     g_saveDecomposition=false;
     g_savePS=false;
     g_outputCuts=false;
+    g_showIRIS=false;
 
     //parse the argument
     if(!parseARG(argc,argv)){
@@ -278,6 +280,7 @@ void Display( void )
     draw(cd);
     if(state.show_normal) drawNormal(cd);
     if(state.show_bridge) drawBridge(cd);
+    if(g_showIRIS) drawIRIS(cd);
     // if(state.show_hull) drawHulls(cd);
     drawTextInfo(cd);
 }
@@ -289,12 +292,14 @@ void Keyboard( unsigned char key, int x, int y )
         //case 'b': show_bridge(); break;
         case 'n': show_normal(); break;
         case 'h': show_hulls(); break;
+        case 'I': g_showIRIS=!g_showIRIS; cout<<"- IRIS Visualization: "<<(g_showIRIS?"ON":"OFF")<<endl; break;
+        case 'i': stepIRIS(cd); break;
         case 'r': resetCamera(); break;
         case 'd': decompose(); break;
         case 'D': decomposeAll(); break;
         case 's': save(); break;
         case 'p': save_PS(); break;
-        case ' ': reload(); break;
+        case ' ': reload(); resetIRIS(); break;
         case '+' : gli::setScale(gli::getScale()*0.95);
                     break;
         case '-' : gli::setScale(gli::getScale()*1.05);
@@ -314,6 +319,8 @@ void print_gui_usage()
 	//cout<<left<<setw(offset)<<"b:"<<"show/hide bridges\n";
 	cout<<left<<setw(offset)<<"d:"<<"decompose once\n";
 	cout<<left<<setw(offset)<<"D:"<<"decompose all\n";
+	cout<<left<<setw(offset)<<"i:"<<"place next IRIS seed (step-by-step inflation)\n";
+	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
 	cout<<left<<setw(offset)<<"n:"<<"show/hide normal direction \n";
 	cout<<left<<setw(offset)<<"h:"<<"show/hide convex hulls\n";	
 	cout<<left<<setw(offset)<<"r:"<<"reset camera\n";
@@ -328,11 +335,12 @@ void print_gui_usage()
 void print_usage(char * name)
 {
     int offset=20;
-	cout<<"Usage: "<<name<<" [-tmabgs] *.poly"<<endl;
+	cout<<"Usage: "<<name<<" [-tmabgsi] *.poly"<<endl;
 	cout<<left<<setw(offset)<<"-t value:"<<"tolerance\n";
 	cout<<left<<setw(offset)<<"-m value:"<<"methods: shortestpath (sp), straightline (sl), hybrid1, hybrid2 \n";
 	cout<<left<<setw(offset)<<"-a value:"<<"alpha: weight for concavity \n";
 	cout<<left<<setw(offset)<<"-b value:"<<"beta: weight for distance \n";
+	cout<<left<<setw(offset)<<"-i / -iris:"<<"visualize Drake IRIS algorithm region\n";
 	cout<<left<<setw(offset)<<"-g:"<<"disable OpenGL \n";
 	cout<<left<<setw(offset)<<"-s:"<<"save decomposition (when GUI is disabled) \n";
 	cout<<left<<setw(offset)<<"-ps:"<<"save decomposition to postscript (PS) file (when GUI is disabled) \n";

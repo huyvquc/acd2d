@@ -26,11 +26,14 @@
     -g                  disable OpenGL 
     -s                  save decomposition when OpenGL GUI is disabled
     -ps                 save decomposition to postscript (PS) file (when GUI is disabled)
+    -i / -iris          visualize Drake IRIS algorithm region
 
 ### GUI options (press key):
 
     d:                  decompose once
     D:                  decompose all
+    i:                  place next IRIS seed (step-by-step inflation)
+    I:                  toggle IRIS region visualization (Shift+I)
     n:                  show/hide normal direction 
     h:                  show/hide convex hulls
     r:                  reset camera

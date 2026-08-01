@@ -32,7 +32,11 @@ endif
 
 CXX  = g++
 LINK = g++
-OPTS = -std=c++11 -MMD -W -O3 -Wno-deprecated -Wno-unused-parameter
+OPTS = -std=c++17 -MMD -W -O3 -Wno-deprecated -Wno-unused-parameter -no-pie
+
+DRAKE_DIR  = /home/huy/opt/drake
+DRAKE_INCL = -I$(DRAKE_DIR)/include -I/usr/include/eigen3 -I/home/huy/opt/include
+DRAKE_LIB  = -L$(DRAKE_DIR)/lib -Wl,-rpath,$(DRAKE_DIR)/lib -ldrake
 
 #--------------------------------------------------------------------
 # Xlib and OpenGL
@@ -69,12 +73,12 @@ endif
 TARGET  = acd2d_gui
 SUBDIRS = . src src/mathtool src/hull src/edge_visibility 
 GUIS = gui gui/GL
-INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL)
+INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL) $(DRAKE_INCL)
 SRCS=$(wildcard $(addsuffix /*.cpp,$(SUBDIRS)))
 OBJS=${SRCS:.cpp=.o}
 GUI_SRCS=$(wildcard $(addsuffix /*.cpp,$(GUIS)))
 GUI_OBJS=${GUI_SRCS:.cpp=.o}
-LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB)
+LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB) $(DRAKE_LIB)
 
 CFLAGS   = $(OPTS) $(INCLUDE) 
 CXXFLAGS = $(CFLAGS) 

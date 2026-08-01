@@ -21,6 +21,7 @@
 #include "acd2d.h"
 #include "acd2d_stat.h"
 #include "acd2d_bridge.h"
+#include "acd2d_iris.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // openggl headers
@@ -29,6 +30,8 @@
 
 //extern cd_state state;
 extern double box[4]; //bbox, defined in acd2d_main_gui.h
+extern Point2d O;
+extern bool g_showIRIS;
 int colorid=-1;
 
 inline void drawPoly(const cd_poly& poly) 
@@ -323,6 +326,329 @@ void Fill(const list<cd_polygon>& pl)
     glEndList();
 
 
+}
+
+static std::vector<std::vector<Eigen::Vector2d>> g_irisComputedRegions;
+static std::vector<Eigen::Vector2d> g_irisComputedSeeds;
+static std::vector<drake::geometry::optimization::HPolyhedron> g_irisHPolyhedrons;
+
+inline void resetIRIS() {
+    g_irisComputedRegions.clear();
+    g_irisComputedSeeds.clear();
+    g_irisHPolyhedrons.clear();
+}
+
+inline bool IsPointInPolygon(const Eigen::Vector2d& pt, const std::vector<Eigen::Vector2d>& poly) {
+    bool inside = false;
+    size_t n = poly.size();
+    for (size_t i = 0, j = n - 1; i < n; j = i++) {
+        double xi = poly[i](0), yi = poly[i](1);
+        double xj = poly[j](0), yj = poly[j](1);
+        bool intersect = ((yi > pt(1)) != (yj > pt(1))) &&
+                         (pt(0) < (xj - xi) * (pt(1) - yi) / (yj - yi + 1e-12) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+inline void stepIRIS(cd_2d& cd2d) {
+    const list<cd_polygon>& todo = cd2d.getTodoList();
+    if (todo.empty() || todo.begin()->empty()) return;
+
+    const cd_polygon& poly = *todo.begin();
+
+    std::vector<std::vector<Eigen::Vector2d>> all_rings;
+    std::vector<Eigen::Vector2d> outer_vertices;
+    std::vector<std::vector<Eigen::Vector2d>> holes_vertices;
+
+    for (cd_polygon::const_iterator ip = poly.begin(); ip != poly.end(); ++ip) {
+        std::vector<Eigen::Vector2d> ring_verts;
+        cd_vertex* ptr = ip->getHead();
+        if (ptr != NULL) {
+            do {
+                const Point2d& pt = ptr->getPos();
+                ring_verts.push_back(Eigen::Vector2d(pt[0], pt[1]));
+                ptr = ptr->getNext();
+            } while (ptr != ip->getHead());
+        }
+
+        if (!ring_verts.empty()) {
+            all_rings.push_back(ring_verts);
+            if (ip->getType() == cd_poly::POUT || outer_vertices.empty()) {
+                outer_vertices = ring_verts;
+            } else {
+                holes_vertices.push_back(ring_verts);
+            }
+        }
+    }
+
+    auto IsValidFreeSpaceSeed = [&](const Eigen::Vector2d& cand) -> bool {
+        if (!IsPointInPolygon(cand, outer_vertices)) return false;
+        for (const auto& hole : holes_vertices) {
+            if (IsPointInPolygon(cand, hole)) return false;
+        }
+        return true;
+    };
+
+    std::vector<Eigen::Vector2d> candidate_seeds;
+    Eigen::Vector2d center_seed(O[0], O[1]);
+    if (IsValidFreeSpaceSeed(center_seed)) {
+        candidate_seeds.push_back(center_seed);
+    }
+
+    // FIST triangulation centroids
+    int ringN = all_rings.size();
+    if (ringN > 0) {
+        int* ringVN = new int[ringN];
+        int vN = 0;
+        for (int r = 0; r < ringN; r++) {
+            ringVN[r] = all_rings[r].size();
+            vN += all_rings[r].size();
+        }
+
+        if (vN >= 3) {
+            int tN = vN + 2 * ringN;
+            double* V = new double[vN * 2];
+            int* T = new int[3 * tN];
+
+            int idx = 0;
+            for (int r = 0; r < ringN; r++) {
+                for (size_t i = 0; i < all_rings[r].size(); i++) {
+                    V[idx * 2]     = all_rings[r][i](0);
+                    V[idx * 2 + 1] = all_rings[r][i](1);
+                    idx++;
+                }
+            }
+
+            FIST_PolygonalArray(ringN, ringVN, (double (*)[2])V, &tN, (int (*)[3])T);
+            for (int i = 0; i < tN; i++) {
+                int id0 = T[i * 3 + 0];
+                int id1 = T[i * 3 + 1];
+                int id2 = T[i * 3 + 2];
+                if (id0 < 0 || id0 >= vN || id1 < 0 || id1 >= vN || id2 < 0 || id2 >= vN) continue;
+                double cx = (V[id0 * 2] + V[id1 * 2] + V[id2 * 2]) / 3.0;
+                double cy = (V[id0 * 2 + 1] + V[id1 * 2 + 1] + V[id2 * 2 + 1]) / 3.0;
+                Eigen::Vector2d tri_seed(cx, cy);
+                if (IsValidFreeSpaceSeed(tri_seed)) {
+                    candidate_seeds.push_back(tri_seed);
+                }
+            }
+            delete[] V;
+            delete[] T;
+        }
+        delete[] ringVN;
+    }
+
+    // Grid seeds
+    double min_x = box[0], max_x = box[1];
+    double min_y = box[2], max_y = box[3];
+    int grid_n = 15;
+    double step_x = (max_x - min_x) / grid_n;
+    double step_y = (max_y - min_y) / grid_n;
+
+    for (int ix = 1; ix < grid_n; ++ix) {
+        for (int iy = 1; iy < grid_n; ++iy) {
+            Eigen::Vector2d cand(min_x + ix * step_x, min_y + iy * step_y);
+            if (IsValidFreeSpaceSeed(cand)) {
+                candidate_seeds.push_back(cand);
+            }
+        }
+    }
+
+    // Domain & Obstacles
+    Eigen::Matrix<double, 4, 2> A_dom;
+    A_dom <<  1,  0, -1,  0,  0,  1,  0, -1;
+    Eigen::Vector4d b_dom;
+    double margin = (box[1] - box[0] + box[3] - box[2]) * 0.1;
+    if (margin < 1.0) margin = 1.0;
+    b_dom << box[1] + margin, -box[0] + margin, box[3] + margin, -box[2] + margin;
+    drake::geometry::optimization::HPolyhedron domain(A_dom, b_dom);
+
+    std::vector<drake::geometry::optimization::HPolyhedron> obstacles;
+    for (const auto& ring : all_rings) {
+        size_t n = ring.size();
+        for (size_t i = 0; i < n; ++i) {
+            const Eigen::Vector2d& p1 = ring[i];
+            const Eigen::Vector2d& p2 = ring[(i + 1) % n];
+            if ((p2 - p1).squaredNorm() < 1e-8) continue;
+            
+            Eigen::Vector2d edge = p2 - p1;
+            double L = edge.norm();
+            Eigen::Vector2d u = edge / L;
+            Eigen::Vector2d v(-u(1), u(0));
+            double v_dot_p1 = v.dot(p1);
+            double u_dot_p1 = u.dot(p1);
+            double eps = 1e-3;
+
+            Eigen::Matrix<double, 4, 2> A_obs;
+            A_obs <<  v(0),  v(1), -v(0), -v(1), u(0), u(1), -u(0), -u(1);
+            Eigen::Vector4d b_obs(v_dot_p1 + eps, -v_dot_p1 + eps, u_dot_p1 + L, -u_dot_p1);
+            obstacles.emplace_back(A_obs, b_obs);
+        }
+    }
+
+    for (const auto& cand : candidate_seeds) {
+        bool covered = false;
+        for (const auto& region : g_irisHPolyhedrons) {
+            if (region.PointInSet(cand, 1e-3)) {
+                covered = true;
+                break;
+            }
+        }
+        if (covered) continue;
+
+        try {
+            drake::geometry::optimization::HPolyhedron region = acd2d::IrisWrapper::InflateRegion(obstacles, cand, domain);
+            std::vector<Eigen::Vector2d> verts = acd2d::IrisWrapper::GetHPolyhedronVertices(region);
+            if (verts.size() >= 3) {
+                g_irisHPolyhedrons.push_back(region);
+                g_irisComputedRegions.push_back(verts);
+                g_irisComputedSeeds.push_back(cand);
+                g_showIRIS = true;
+                std::cout << "- Step IRIS: Inflated region #" << g_irisComputedRegions.size()
+                          << " at seed (" << cand(0) << ", " << cand(1) << ")" << std::endl;
+                return;
+            }
+        } catch (...) {}
+    }
+
+    std::cout << "- Step IRIS: All reachable interior space inflated! (Total regions: " 
+              << g_irisComputedRegions.size() << ")" << std::endl;
+}
+
+inline void drawIRIS(cd_2d& cd2d)
+{
+    glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_LINE_BIT);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // If no step-by-step regions computed yet, compute full decomposition once
+    if (g_irisComputedRegions.empty()) {
+        const list<cd_polygon>& todo = cd2d.getTodoList();
+        if (!todo.empty() && !todo.begin()->empty()) {
+            const cd_polygon& poly = *todo.begin();
+            std::vector<std::vector<Eigen::Vector2d>> all_rings;
+            std::vector<Eigen::Vector2d> outer_vertices;
+            std::vector<std::vector<Eigen::Vector2d>> holes_vertices;
+
+            for (cd_polygon::const_iterator ip = poly.begin(); ip != poly.end(); ++ip) {
+                std::vector<Eigen::Vector2d> ring_verts;
+                cd_vertex* ptr = ip->getHead();
+                if (ptr != NULL) {
+                    do {
+                        const Point2d& pt = ptr->getPos();
+                        ring_verts.push_back(Eigen::Vector2d(pt[0], pt[1]));
+                        ptr = ptr->getNext();
+                    } while (ptr != ip->getHead());
+                }
+
+                if (!ring_verts.empty()) {
+                    all_rings.push_back(ring_verts);
+                    if (ip->getType() == cd_poly::POUT || outer_vertices.empty()) {
+                        outer_vertices = ring_verts;
+                    } else {
+                        holes_vertices.push_back(ring_verts);
+                    }
+                }
+            }
+
+            auto IsValidFreeSpaceSeed = [&](const Eigen::Vector2d& cand) -> bool {
+                if (!IsPointInPolygon(cand, outer_vertices)) return false;
+                for (const auto& hole : holes_vertices) {
+                    if (IsPointInPolygon(cand, hole)) return false;
+                }
+                return true;
+            };
+
+            std::vector<Eigen::Vector2d> seeds;
+            Eigen::Vector2d center_seed(O[0], O[1]);
+            if (IsValidFreeSpaceSeed(center_seed)) seeds.push_back(center_seed);
+
+            int ringN = all_rings.size();
+            if (ringN > 0) {
+                int* ringVN = new int[ringN];
+                int vN = 0;
+                for (int r = 0; r < ringN; r++) {
+                    ringVN[r] = all_rings[r].size();
+                    vN += all_rings[r].size();
+                }
+
+                if (vN >= 3) {
+                    int tN = vN + 2 * ringN;
+                    double* V = new double[vN * 2];
+                    int* T = new int[3 * tN];
+
+                    int idx = 0;
+                    for (int r = 0; r < ringN; r++) {
+                        for (size_t i = 0; i < all_rings[r].size(); i++) {
+                            V[idx * 2]     = all_rings[r][i](0);
+                            V[idx * 2 + 1] = all_rings[r][i](1);
+                            idx++;
+                        }
+                    }
+
+                    FIST_PolygonalArray(ringN, ringVN, (double (*)[2])V, &tN, (int (*)[3])T);
+                    for (int i = 0; i < tN; i++) {
+                        int id0 = T[i * 3 + 0];
+                        int id1 = T[i * 3 + 1];
+                        int id2 = T[i * 3 + 2];
+                        if (id0 < 0 || id0 >= vN || id1 < 0 || id1 >= vN || id2 < 0 || id2 >= vN) continue;
+                        double cx = (V[id0 * 2] + V[id1 * 2] + V[id2 * 2]) / 3.0;
+                        double cy = (V[id0 * 2 + 1] + V[id1 * 2 + 1] + V[id2 * 2 + 1]) / 3.0;
+                        Eigen::Vector2d tri_seed(cx, cy);
+                        if (IsValidFreeSpaceSeed(tri_seed)) seeds.push_back(tri_seed);
+                    }
+                    delete[] V;
+                    delete[] T;
+                }
+                delete[] ringVN;
+            }
+
+            g_irisComputedRegions = acd2d::IrisWrapper::ComputeIrisDecomposition(all_rings, seeds, box);
+            g_irisComputedSeeds = seeds;
+        }
+    }
+
+    static float colors[][3] = {
+        {0.0f, 0.8f, 0.8f},
+        {0.9f, 0.4f, 0.2f},
+        {0.3f, 0.8f, 0.3f},
+        {0.8f, 0.3f, 0.8f},
+        {0.9f, 0.8f, 0.2f},
+        {0.2f, 0.5f, 0.9f}
+    };
+    int num_colors = sizeof(colors) / sizeof(colors[0]);
+
+    for (size_t r = 0; r < g_irisComputedRegions.size(); ++r) {
+        const auto& iris_verts = g_irisComputedRegions[r];
+        float* col = colors[r % num_colors];
+
+        glColor4f(col[0], col[1], col[2], 0.35f);
+        glBegin(GL_TRIANGLE_FAN);
+        for (const auto& v : iris_verts) {
+            glVertex2d(v(0), v(1));
+        }
+        glEnd();
+
+        glLineWidth(2.5f);
+        glColor3f(col[0], col[1], col[2]);
+        glBegin(GL_LINE_LOOP);
+        for (const auto& v : iris_verts) {
+            glVertex2d(v(0), v(1));
+        }
+        glEnd();
+    }
+
+    glPointSize(8.0f);
+    glColor3f(1.0f, 0.2f, 0.2f);
+    glBegin(GL_POINTS);
+    for (const auto& s : g_irisComputedSeeds) {
+        glVertex2d(s(0), s(1));
+    }
+    glEnd();
+
+    glPopAttrib();
 }
 
 #endif //_ACD2d_DRAW_H_
