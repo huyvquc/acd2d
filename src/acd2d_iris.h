@@ -45,10 +45,15 @@ public:
         const double bbox[4]
     );
 
+    struct IrisDecompositionResult {
+        std::vector<std::vector<Eigen::Vector2d>> regions;
+        std::vector<Eigen::Vector2d> seeds;
+    };
+
     /**
      * @brief Computes 2D IRIS decomposition for an entire polygon (with optional holes) using multiple interior seed points.
      */
-    static std::vector<std::vector<Eigen::Vector2d>> ComputeIrisDecomposition(
+    static IrisDecompositionResult ComputeIrisDecomposition(
         const std::vector<std::vector<Eigen::Vector2d>>& all_rings,
         const std::vector<Eigen::Vector2d>& seeds,
         const double bbox[4]

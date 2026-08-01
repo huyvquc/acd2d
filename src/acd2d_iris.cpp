@@ -151,12 +151,13 @@ std::vector<Eigen::Vector2d> IrisWrapper::ComputeIrisPolygon(
     return GetHPolyhedronVertices(inflated);
 }
 
-std::vector<std::vector<Eigen::Vector2d>> IrisWrapper::ComputeIrisDecomposition(
+IrisWrapper::IrisDecompositionResult IrisWrapper::ComputeIrisDecomposition(
     const std::vector<std::vector<Eigen::Vector2d>>& all_rings,
     const std::vector<Eigen::Vector2d>& seeds,
     const double bbox[4]
 ) {
-    if (all_rings.empty() || seeds.empty()) return {};
+    IrisDecompositionResult result;
+    if (all_rings.empty() || seeds.empty()) return result;
 
     // Create domain HPolyhedron box from bbox
     Eigen::Matrix<double, 4, 2> A_dom;
@@ -184,13 +185,12 @@ std::vector<std::vector<Eigen::Vector2d>> IrisWrapper::ComputeIrisDecomposition(
     }
 
     std::vector<drake::geometry::optimization::HPolyhedron> inflated_regions;
-    std::vector<std::vector<Eigen::Vector2d>> result_polys;
 
     for (const auto& seed : seeds) {
         // Skip seed if already covered by an existing inflated region
         bool covered = false;
         for (const auto& region : inflated_regions) {
-            if (region.PointInSet(seed, 1e-3)) {
+            if (region.PointInSet(seed, 1e-2)) {
                 covered = true;
                 break;
             }
@@ -202,14 +202,15 @@ std::vector<std::vector<Eigen::Vector2d>> IrisWrapper::ComputeIrisDecomposition(
             std::vector<Eigen::Vector2d> verts = GetHPolyhedronVertices(region);
             if (verts.size() >= 3) {
                 inflated_regions.push_back(region);
-                result_polys.push_back(verts);
+                result.regions.push_back(verts);
+                result.seeds.push_back(seed);
             }
         } catch (...) {
             // Ignore optimization failures
         }
     }
 
-    return result_polys;
+    return result;
 }
 
 } // namespace acd2d

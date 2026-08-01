@@ -18,6 +18,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 // acd2d headers
+#include <random>
 #include "acd2d.h"
 #include "acd2d_stat.h"
 #include "acd2d_bridge.h"
@@ -270,47 +271,70 @@ extern "C"{
 void drawFill(const cd_polygon& pl)
 {
     typedef cd_polygon::const_iterator   PIT;
-    int ringN=pl.size();           //number of rings
-    int * ringVN=new int[ringN];     //number of vertices for each ring
-    
-    int vN=0;             //total number of vertices
-    {   int i=0;
-    for(PIT ip=pl.begin();ip!=pl.end();ip++,i++){
-        vN+=ip->getSize();
-        ringVN[i]=ip->getSize();
+    int ringN = pl.size();           // number of rings
+    if (ringN == 0) return;
+
+    int* ringVN = new int[ringN];     // number of vertices for each ring
+    int vN = 0;                        // total number of vertices
+    {
+        int r = 0;
+        for (PIT ip = pl.begin(); ip != pl.end(); ip++, r++) {
+            int count = 0;
+            cd_vertex* ptr = ip->getHead();
+            if (ptr != NULL) {
+                do {
+                    count++;
+                    ptr = ptr->getNext();
+                } while (ptr != ip->getHead());
+            }
+            ringVN[r] = count;
+            vN += count;
+        }
     }
+    
+    if (vN < 3) {
+        delete[] ringVN;
+        return;
     }
+
+    int tN = vN + 2 * ringN;          // (n-2)+2*(#holes)
+    double* V = new double[vN * 2];   // vertex positions
+    int* T = new int[3 * tN];         // resulting triangles
     
-    if( vN<3 ) return;
-    int tN=(vN-2)+2*(ringN-1);       //(n-2)+2*(#holes)
-    double * V=new double[vN*2];     //to hole vertices pos
-    int *T=new int[3*tN];            //to hole resulting triangles
-    
-    //copy vertices
-    {   int i=0;
-        for(PIT ip=pl.begin();ip!=pl.end();ip++){
-            cd_vertex * ptr=ip->getHead();
-            do{
-                Point2d pt=ptr->getPos();
-                V[i*2]=pt[0];
-                V[i*2+1]=pt[1];
-                ptr=ptr->getNext();
-                i++;
-            }while( ptr!=ip->getHead() );
+    // copy vertices
+    {
+        int i = 0;
+        for (PIT ip = pl.begin(); ip != pl.end(); ip++) {
+            cd_vertex* ptr = ip->getHead();
+            if (ptr != NULL) {
+                do {
+                    Point2d pt = ptr->getPos();
+                    V[i * 2]     = pt[0];
+                    V[i * 2 + 1] = pt[1];
+                    ptr = ptr->getNext();
+                    i++;
+                } while (ptr != ip->getHead());
+            }
         }
     }
     
     FIST_PolygonalArray(ringN, ringVN, (double (*)[2])V, &tN, (int (*)[3])T);
     {
         glBegin(GL_TRIANGLES);
-        for(int i=0;i<tN;i++){
-            for(int j=0;j<3;j++){
-                int tid=T[i*3+j];
-                glVertex2d(V[tid*2],V[tid*2+1]);
+        for (int i = 0; i < tN; i++) {
+            for (int j = 0; j < 3; j++) {
+                int tid = T[i * 3 + j];
+                if (tid >= 0 && tid < vN) {
+                    glVertex2d(V[tid * 2], V[tid * 2 + 1]);
+                }
             }
         }
         glEnd();
     }
+
+    delete[] ringVN;
+    delete[] V;
+    delete[] T;
 }
 
 void Fill(const list<cd_polygon>& pl)
@@ -390,71 +414,6 @@ inline void stepIRIS(cd_2d& cd2d) {
         return true;
     };
 
-    std::vector<Eigen::Vector2d> candidate_seeds;
-    Eigen::Vector2d center_seed(O[0], O[1]);
-    if (IsValidFreeSpaceSeed(center_seed)) {
-        candidate_seeds.push_back(center_seed);
-    }
-
-    // FIST triangulation centroids
-    int ringN = all_rings.size();
-    if (ringN > 0) {
-        int* ringVN = new int[ringN];
-        int vN = 0;
-        for (int r = 0; r < ringN; r++) {
-            ringVN[r] = all_rings[r].size();
-            vN += all_rings[r].size();
-        }
-
-        if (vN >= 3) {
-            int tN = vN + 2 * ringN;
-            double* V = new double[vN * 2];
-            int* T = new int[3 * tN];
-
-            int idx = 0;
-            for (int r = 0; r < ringN; r++) {
-                for (size_t i = 0; i < all_rings[r].size(); i++) {
-                    V[idx * 2]     = all_rings[r][i](0);
-                    V[idx * 2 + 1] = all_rings[r][i](1);
-                    idx++;
-                }
-            }
-
-            FIST_PolygonalArray(ringN, ringVN, (double (*)[2])V, &tN, (int (*)[3])T);
-            for (int i = 0; i < tN; i++) {
-                int id0 = T[i * 3 + 0];
-                int id1 = T[i * 3 + 1];
-                int id2 = T[i * 3 + 2];
-                if (id0 < 0 || id0 >= vN || id1 < 0 || id1 >= vN || id2 < 0 || id2 >= vN) continue;
-                double cx = (V[id0 * 2] + V[id1 * 2] + V[id2 * 2]) / 3.0;
-                double cy = (V[id0 * 2 + 1] + V[id1 * 2 + 1] + V[id2 * 2 + 1]) / 3.0;
-                Eigen::Vector2d tri_seed(cx, cy);
-                if (IsValidFreeSpaceSeed(tri_seed)) {
-                    candidate_seeds.push_back(tri_seed);
-                }
-            }
-            delete[] V;
-            delete[] T;
-        }
-        delete[] ringVN;
-    }
-
-    // Grid seeds
-    double min_x = box[0], max_x = box[1];
-    double min_y = box[2], max_y = box[3];
-    int grid_n = 15;
-    double step_x = (max_x - min_x) / grid_n;
-    double step_y = (max_y - min_y) / grid_n;
-
-    for (int ix = 1; ix < grid_n; ++ix) {
-        for (int iy = 1; iy < grid_n; ++iy) {
-            Eigen::Vector2d cand(min_x + ix * step_x, min_y + iy * step_y);
-            if (IsValidFreeSpaceSeed(cand)) {
-                candidate_seeds.push_back(cand);
-            }
-        }
-    }
-
     // Domain & Obstacles
     Eigen::Matrix<double, 4, 2> A_dom;
     A_dom <<  1,  0, -1,  0,  0,  1,  0, -1;
@@ -487,10 +446,22 @@ inline void stepIRIS(cd_2d& cd2d) {
         }
     }
 
-    for (const auto& cand : candidate_seeds) {
+    double min_x = box[0], max_x = box[1];
+    double min_y = box[2], max_y = box[3];
+
+    static std::random_device rd;
+    static std::mt19937 rng(rd());
+    std::uniform_real_distribution<double> dist_x(min_x, max_x);
+    std::uniform_real_distribution<double> dist_y(min_y, max_y);
+
+    int max_attempts = 10000;
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        Eigen::Vector2d cand(dist_x(rng), dist_y(rng));
+        if (!IsValidFreeSpaceSeed(cand)) continue;
+
         bool covered = false;
         for (const auto& region : g_irisHPolyhedrons) {
-            if (region.PointInSet(cand, 1e-3)) {
+            if (region.PointInSet(cand, 1e-2)) {
                 covered = true;
                 break;
             }
@@ -506,14 +477,14 @@ inline void stepIRIS(cd_2d& cd2d) {
                 g_irisComputedSeeds.push_back(cand);
                 g_showIRIS = true;
                 std::cout << "- Step IRIS: Inflated region #" << g_irisComputedRegions.size()
-                          << " at seed (" << cand(0) << ", " << cand(1) << ")" << std::endl;
+                          << " at random seed (" << cand(0) << ", " << cand(1) << ")" << std::endl;
                 return;
             }
         } catch (...) {}
     }
 
-    std::cout << "- Step IRIS: All reachable interior space inflated! (Total regions: " 
-              << g_irisComputedRegions.size() << ")" << std::endl;
+    std::cout << "- Step IRIS: No uncovered interior space found after " << max_attempts 
+              << " random trials! (Total regions: " << g_irisComputedRegions.size() << ")" << std::endl;
 }
 
 inline void drawIRIS(cd_2d& cd2d)
@@ -605,8 +576,10 @@ inline void drawIRIS(cd_2d& cd2d)
                 delete[] ringVN;
             }
 
-            g_irisComputedRegions = acd2d::IrisWrapper::ComputeIrisDecomposition(all_rings, seeds, box);
-            g_irisComputedSeeds = seeds;
+            acd2d::IrisWrapper::IrisDecompositionResult decomp = 
+                acd2d::IrisWrapper::ComputeIrisDecomposition(all_rings, seeds, box);
+            g_irisComputedRegions = decomp.regions;
+            g_irisComputedSeeds = decomp.seeds;
         }
     }
 
