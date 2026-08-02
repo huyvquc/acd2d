@@ -437,7 +437,7 @@ inline void stepIRIS(cd_2d& cd2d) {
             Eigen::Vector2d v(-u(1), u(0));
             double v_dot_p1 = v.dot(p1);
             double u_dot_p1 = u.dot(p1);
-            double eps = 1e-3;
+            double eps = 1e-6;
 
             Eigen::Matrix<double, 4, 2> A_obs;
             A_obs <<  v(0),  v(1), -v(0), -v(1), u(0), u(1), -u(0), -u(1);
@@ -604,7 +604,7 @@ inline void drawIRIS(cd_2d& cd2d)
         }
         glEnd();
 
-        glLineWidth(2.5f);
+        glLineWidth(1.0f);
         glColor3f(col[0], col[1], col[2]);
         glBegin(GL_LINE_LOOP);
         for (const auto& v : iris_verts) {

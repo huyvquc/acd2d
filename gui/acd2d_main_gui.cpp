@@ -86,7 +86,7 @@ int main( int argc, char ** argv)
 		/////////////////////////////////////////////////////////////////
 		//setup glut/gli
 		glutInit( &argc, argv );
-		glutInitDisplayMode( GLUT_RGB|GLUT_DOUBLE|GLUT_DEPTH );
+		glutInitDisplayMode( GLUT_RGB|GLUT_DOUBLE|GLUT_DEPTH|GLUT_STENCIL );
 		glutInitWindowSize( 480, 480);
 		glutInitWindowPosition( 50, 50 );
 		glutCreateWindow( "ACD2d" );
@@ -256,7 +256,7 @@ void createPolys(const string& filename, cd_2d& cd)
 void Display( void )
 {
     //Init Draw
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 
     glMatrixMode( GL_PROJECTION );
     glLoadIdentity();
@@ -274,13 +274,37 @@ void Display( void )
 
     glTranslatef(-O[0],-O[1],0);
 
+    // Build Stencil Mask for Polygon Interior
+    if (colorid >= 0) {
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glDepthMask(GL_FALSE);
+
+        glCallList(colorid);
+
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+    }
+
+    // Draw IRIS regions clipped strictly to the polygon interior via Stencil Test
+    if (g_showIRIS) {
+        if (colorid >= 0) {
+            glStencilFunc(GL_EQUAL, 1, 0xFF);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        }
+        drawIRIS(cd);
+    }
+
+    glDisable(GL_STENCIL_TEST);
+
     //draw model
     glLineWidth(1);
     glColor3f(0.2f, 0.1f, 0.1f);
     draw(cd);
     if(state.show_normal) drawNormal(cd);
     if(state.show_bridge) drawBridge(cd);
-    if(g_showIRIS) drawIRIS(cd);
     // if(state.show_hull) drawHulls(cd);
     drawTextInfo(cd);
 }

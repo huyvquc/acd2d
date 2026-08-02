@@ -50,7 +50,7 @@ std::vector<Eigen::Vector2d> IrisWrapper::GetHPolyhedronVertices(
             // Check if pt satisfies all inequalities A * pt <= b
             bool inside = true;
             for (int k = 0; k < m; ++k) {
-                if (A(k, 0) * x + A(k, 1) * y > b(k) + 1e-4) {
+                if (A(k, 0) * x + A(k, 1) * y > b(k) + 1e-7) {
                     inside = false;
                     break;
                 }
@@ -88,7 +88,7 @@ std::vector<Eigen::Vector2d> IrisWrapper::GetHPolyhedronVertices(
 static drake::geometry::optimization::HPolyhedron MakeSegmentObstacle(
     const Eigen::Vector2d& p1,
     const Eigen::Vector2d& p2,
-    double eps = 1e-3
+    double eps = 1e-6
 ) {
     Eigen::Vector2d edge = p2 - p1;
     double L = edge.norm();
