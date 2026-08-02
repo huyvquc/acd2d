@@ -18,7 +18,11 @@ namespace acd2d
 	
 	cd_vertex::~cd_vertex()
 	{
-		removeBridge(this); 
+		if (bridge != NULL) {
+			if (bridge->v1 == this) bridge->v1 = NULL;
+			if (bridge->v2 == this) bridge->v2 = NULL;
+			bridge = NULL;
+		}
 	}
 	
 	void cd_vertex::computeNormal()
@@ -115,12 +119,20 @@ namespace acd2d
 	void cd_poly::destroy()
 	{
 		if( head==NULL ) return;
+		list<cd_bridge*> bridges;
+		getBridges(bridges);
+		for (auto b : bridges) {
+			delete b;
+		}
 		cd_vertex* ptr=head;
+		int count = 0;
 		do{
 			cd_vertex * n=ptr->getNext();
+			ptr->setBridge(NULL);
 			delete ptr;
 			ptr=n;
-		}while( ptr!=head );
+			count++;
+		}while( ptr!=NULL && ptr!=head && count < size + 10 );
 		head=tail=NULL;
 	}
 	
@@ -222,6 +234,15 @@ namespace acd2d
 	void cd_poly::findMaxNotch(IConcavityMeasure * measure)
 	{   
 		if( type!=POUT ) cerr<<"! ERROR: findMaxNotch Error"<<endl;
+		cd_vertex* ptr = head;
+		if (ptr != NULL) {
+			int count = 0;
+			do {
+				removeBridge(ptr);
+				ptr = ptr->getNext();
+				count++;
+			} while (ptr != NULL && ptr != head && count < size + 10);
+		}
 		///////////////////////////////////////////////////////////////////////////
 		construct_bridges(head,tail);
 		///////////////////////////////////////////////////////////////////////////

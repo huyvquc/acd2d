@@ -56,10 +56,17 @@ namespace acd2d
 	void cd_2d::decomposeAll(double d, IConcavityMeasure * measure)
 	{
 		if( d<1e-20 ) d=1e-20;
+		int steps = 0;
 		do{
 			decompose(d,measure);
+			steps++;
+			if (steps > 1000) {
+				cerr << "! Warning: decomposeAll reached max steps limit (1000)" << endl;
+				break;
+			}
 		}
 		while(!todo_list.empty());
+		cout << "Decomposition finished! Total convex pieces: " << done_list.size() << endl;
 	}
 	
 	void cd_2d::decompose(double d, IConcavityMeasure * measure)
@@ -76,12 +83,14 @@ namespace acd2d
 	
 		for(;ips!=ps.end();ips++){
 			cd_polygon& polys=*ips;
+			if (polys.empty()) continue;
 			decompose(d,polys);
 		}
 	}
 	
 	void cd_2d::decompose(double d, cd_polygon& polys)
 	{
+		if (polys.empty()) return;
 		//if there are inner polys, random pick one and find the cut
 		cd_poly poly=polys.next();
 		if( poly.getType()==cd_poly::PIN ) // hole
@@ -97,13 +106,7 @@ namespace acd2d
 		//check if we need to cut it.
 		cd_vertex * r=poly.findCW(m_measure).first;
 	
-		if( r==NULL ){
-			done_list.push_back(polys);
-			return;
-		}
-	
-		//smaller than tolerance
-		if( r->getConcavity()<d ){
+		if( r==NULL || !r->isReflex() || r->getConcavity() >= FLT_MAX - 1.0 || r->getConcavity()<=d ){
 			done_list.push_back(polys);
 			return;
 		}
@@ -114,9 +117,14 @@ namespace acd2d
 		pair<cd_polygon,cd_polygon> sub_polys;
 		cd_diagonal dia=cutPolys(sub_polys,polys.front(),cut_l);
 	
+		if (sub_polys.first.empty() && sub_polys.second.empty()) {
+			done_list.push_back(polys);
+			return;
+		}
+
 		//add into to do
-		todo_list.push_back(sub_polys.first);
-		todo_list.push_back(sub_polys.second);
+		if (!sub_polys.first.empty()) todo_list.push_back(sub_polys.first);
+		if (!sub_polys.second.empty()) todo_list.push_back(sub_polys.second);
 	
 		//store cut line
 		if(store_diagoanls) dia_list.push_back(dia);

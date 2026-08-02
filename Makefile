@@ -32,7 +32,7 @@ endif
 
 CXX  = g++
 LINK = g++
-OPTS = -std=c++17 -MMD -W -O3 -Wno-deprecated -Wno-unused-parameter -no-pie
+OPTS = -g -std=c++17 -MMD -W -O0 -Wno-deprecated -Wno-unused-parameter -no-pie
 
 DRAKE_DIR  = /home/huy/opt/drake
 DRAKE_INCL = -I$(DRAKE_DIR)/include -I/usr/include/eigen3 -I/home/huy/opt/include

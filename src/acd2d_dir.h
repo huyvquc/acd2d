@@ -18,10 +18,15 @@ namespace acd2d
 	void setupCutLine(cd_vertex * r,cd_vertex * r2,cd_line& line)
 	{
 		Vector2d dir;
-		if( r2==NULL )
-			dir=-(r->getNormal()+r->getPre()->getNormal());
-		else 
-			dir=r2->getPos()-r->getPos();
+		if( r2 != NULL )
+			dir = r2->getPos() - r->getPos();
+		
+		if( r2 == NULL || dir.normsqr() < 1e-12 )
+			dir = -(r->getNormal() + r->getPre()->getNormal());
+
+		if (dir.normsqr() < 1e-12)
+			dir.set(1.0, 0.0);
+
 		line.vec=dir.normalize();
 		line.support=r;
 		line.origin=r->getPos();

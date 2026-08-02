@@ -268,6 +268,7 @@ namespace acd2d
 		typedef list<cd_poly>::iterator PIT;
 		for( PIT ip=poly.begin();ip!=poly.end();ip++ )
 			if( ip->getType()==cd_poly::POUT ) return *ip;
+		if (!poly.empty()) return poly.front();
 		cerr<<"findOutMost: Error: Can't Find outmost polygonal chain"<<endl;
 		exit(1);
 	}

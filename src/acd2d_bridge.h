@@ -36,7 +36,14 @@ namespace acd2d
 	//set s->e 's bridge to b.
 	inline void setBridge( cd_bridge * b, cd_vertex * s, cd_vertex * e )
 	{
-		while(s!=e){ s->setBridge(b); s=s->getNext(); }
+		if (s == NULL || e == NULL) return;
+		cd_vertex* cur = s;
+		int count = 0;
+		while( cur != NULL && cur != e && count < 10000 ){
+			cur->setBridge(b);
+			cur = cur->getNext();
+			count++;
+		}
 	}
 	
 	inline void construct_bridges( cd_vertex * s, cd_vertex * e)
@@ -65,9 +72,21 @@ namespace acd2d
 	
 	inline void removeBridge(cd_vertex* v)
 	{
-		if( v->getBridge()!=NULL ){
-			cd_bridge * b=v->getBridge();
-			setBridge(NULL,b->v1,b->v2);
+		if( v != NULL && v->getBridge() != NULL ){
+			cd_bridge * b = v->getBridge();
+			if (b->v1 != NULL) {
+				cd_vertex* cur = b->v1;
+				int count = 0;
+				while (cur != NULL && count < 10000) {
+					if (cur->getBridge() == b) {
+						cur->setBridge(NULL);
+					}
+					if (cur == b->v2) break;
+					cur = cur->getNext();
+					count++;
+				}
+			}
+			v->setBridge(NULL);
 			delete b;
 		}
 	}
