@@ -68,19 +68,30 @@ endif
 
 	
 #--------------------------------------------------------------------
+# ExtensionCC (Vertex Clique Cover) & CGAL / Boost
+#--------------------------------------------------------------------
+EXT_DIR = /home/huy/ExtensionCC/src/cpp
+EXT_INCL = -I$(EXT_DIR) -I$(EXT_DIR)/triangulation
+EXT_LIB = -lgmp -lmpfr -lboost_system -lboost_filesystem -fopenmp
+
+EXT_SRCS = $(EXT_DIR)/com.cpp $(EXT_DIR)/geometry_utils.cpp $(EXT_DIR)/intersection_predicates.cpp $(EXT_DIR)/visibility.cpp $(EXT_DIR)/dualgraph.cpp $(EXT_DIR)/partition_constructor.cpp $(EXT_DIR)/chgraph.cpp $(EXT_DIR)/rng.cpp $(EXT_DIR)/dsu.cpp $(EXT_DIR)/vcc.cpp $(EXT_DIR)/clique.cpp $(EXT_DIR)/triangulation/polygon_delaunay.cpp $(EXT_DIR)/triangulation/polygon_delaunay_constrained.cpp
+
+EXT_OBJS = $(EXT_SRCS:.cpp=.o)
+
+#--------------------------------------------------------------------
 # Put all together
 #--------------------------------------------------------------------
 TARGET  = acd2d_gui
 SUBDIRS = . src src/mathtool src/hull src/edge_visibility 
 GUIS = gui gui/GL
-INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL) $(DRAKE_INCL)
+INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL) $(DRAKE_INCL) $(EXT_INCL)
 SRCS=$(wildcard $(addsuffix /*.cpp,$(SUBDIRS)))
 OBJS=${SRCS:.cpp=.o}
 GUI_SRCS=$(wildcard $(addsuffix /*.cpp,$(GUIS)))
 GUI_OBJS=${GUI_SRCS:.cpp=.o}
-LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB) $(DRAKE_LIB)
+LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB) $(DRAKE_LIB) $(EXT_LIB)
 
-CFLAGS   = $(OPTS) $(INCLUDE) 
+CFLAGS   = $(OPTS) -fopenmp $(INCLUDE) 
 CXXFLAGS = $(CFLAGS) 
 
 
@@ -90,15 +101,15 @@ all :  $(TARGET)
 #--------------------------------------------------------------------
 
 #--------------------------------------------------------------------
-$(TARGET): $(OBJS) $(GUI_OBJS)
-	${CXX} ${CXXFLAGS} -o $@ $(OBJS) $(GUI_OBJS) $(LIB)
+$(TARGET): $(OBJS) $(GUI_OBJS) $(EXT_OBJS)
+	${CXX} ${CXXFLAGS} -o $@ $(OBJS) $(GUI_OBJS) $(EXT_OBJS) $(LIB)
 
 lib: $(OBJS) 
 	ar rcs $(TARGETLIB) $(OBJS)
 
 
 clean:
-	-rm -f $(OBJS) $(GUI_OBJS) $(TARGET) Dependencies $(TARGETLIB)
+	-rm -f $(OBJS) $(GUI_OBJS) $(EXT_OBJS) $(TARGET) Dependencies $(TARGETLIB)
 
 #--------------------------------------------------------------------
 .SUFFIXES: .cpp

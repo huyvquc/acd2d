@@ -47,6 +47,8 @@ bool   g_saveDecomposition;
 bool   g_savePS;
 bool   g_outputCuts;
 bool   g_showIRIS;
+bool   g_showVCC;
+bool   g_vccUseExtension;
 
 ///////////////////////////////////////////////////////////////////////
 // additional global data

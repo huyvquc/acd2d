@@ -23,6 +23,7 @@
 #include "acd2d_stat.h"
 #include "acd2d_bridge.h"
 #include "acd2d_iris.h"
+#include "acd2d_vcc.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // openggl headers
@@ -33,6 +34,8 @@
 extern double box[4]; //bbox, defined in acd2d_main_gui.h
 extern Point2d O;
 extern bool g_showIRIS;
+extern bool g_showVCC;
+extern bool g_vccUseExtension;
 int colorid=-1;
 
 inline void drawPoly(const cd_poly& poly) 
@@ -624,4 +627,68 @@ inline void drawIRIS(cd_2d& cd2d)
     glPopAttrib();
 }
 
+static std::vector<std::vector<Point2d>> g_vccComputedRegions;
+
+inline void resetVCC() {
+    g_vccComputedRegions.clear();
+}
+
+inline void computeVCC(cd_2d& cd2d, bool use_extension = false) {
+    const list<cd_polygon>& todo = cd2d.getTodoList();
+    if (todo.empty() || todo.begin()->empty()) return;
+
+    g_vccUseExtension = use_extension;
+    acd2d::VccDecompositionResult res = 
+        acd2d::VccWrapper::ComputeVccDecomposition(*todo.begin(), use_extension);
+    g_vccComputedRegions = res.regions;
+    g_showVCC = true;
+}
+
+inline void drawVCC(cd_2d& cd2d)
+{
+    glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_LINE_BIT);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    if (g_vccComputedRegions.empty()) {
+        computeVCC(cd2d, g_vccUseExtension);
+    }
+
+    static float vcc_colors[][3] = {
+        {0.85f, 0.25f, 0.25f},
+        {0.25f, 0.75f, 0.35f},
+        {0.25f, 0.45f, 0.85f},
+        {0.85f, 0.75f, 0.25f},
+        {0.75f, 0.35f, 0.85f},
+        {0.25f, 0.85f, 0.85f},
+        {0.95f, 0.55f, 0.15f},
+        {0.55f, 0.35f, 0.75f}
+    };
+    int num_colors = sizeof(vcc_colors) / sizeof(vcc_colors[0]);
+
+    for (size_t r = 0; r < g_vccComputedRegions.size(); ++r) {
+        const auto& verts = g_vccComputedRegions[r];
+        float* col = vcc_colors[r % num_colors];
+
+        glColor4f(col[0], col[1], col[2], 0.38f);
+        glBegin(GL_TRIANGLE_FAN);
+        for (const auto& pt : verts) {
+            glVertex2d(pt[0], pt[1]);
+        }
+        glEnd();
+
+        glLineWidth(1.5f);
+        glColor3f(col[0], col[1], col[2]);
+        glBegin(GL_LINE_LOOP);
+        for (const auto& pt : verts) {
+            glVertex2d(pt[0], pt[1]);
+        }
+        glEnd();
+    }
+
+    glPopAttrib();
+}
+
 #endif //_ACD2d_DRAW_H_
+
