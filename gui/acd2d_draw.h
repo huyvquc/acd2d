@@ -93,28 +93,106 @@ inline void drawpolylist(const list<cd_polygon>& pl)
     }   
 }
 
+extern cd_polygon g_orig_poly;
+
+void drawFill(const cd_polygon& pl);
+
+inline void drawColoredDoneList(const list<cd_polygon>& done_list)
+{
+    if (done_list.empty()) return;
+
+    static float acd_palette[][3] = {
+        {0.90f, 0.35f, 0.35f}, // Coral Red
+        {0.25f, 0.75f, 0.40f}, // Emerald Green
+        {0.30f, 0.55f, 0.90f}, // Royal Blue
+        {0.95f, 0.70f, 0.20f}, // Amber Yellow
+        {0.70f, 0.35f, 0.85f}, // Purple
+        {0.20f, 0.80f, 0.80f}, // Turquoise Cyan
+        {0.95f, 0.45f, 0.65f}, // Rose Pink
+        {0.55f, 0.80f, 0.25f}, // Lime Green
+        {0.95f, 0.55f, 0.25f}, // Bright Orange
+        {0.45f, 0.40f, 0.85f}, // Indigo
+        {0.20f, 0.70f, 0.60f}, // Teal
+        {0.85f, 0.35f, 0.55f}, // Magenta
+        {0.75f, 0.65f, 0.25f}, // Olive Gold
+        {0.50f, 0.65f, 0.85f}, // Sky Blue
+        {0.80f, 0.50f, 0.35f}, // Terracotta
+        {0.40f, 0.75f, 0.75f}  // Aquamarine
+    };
+    int num_colors = sizeof(acd_palette) / sizeof(acd_palette[0]);
+
+    glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_LINE_BIT);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    int idx = 0;
+    for (const auto& polys : done_list) {
+        float* col = acd_palette[idx % num_colors];
+
+        // 1. Draw colored interior fill
+        glColor4f(col[0], col[1], col[2], 0.50f);
+        drawFill(polys);
+
+        // 2. Draw partition boundary line between pieces
+        glLineWidth(1.2f);
+        glColor3f(col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f);
+        for (const auto& poly : polys) {
+            drawPoly(poly);
+        }
+
+        idx++;
+    }
+
+    glPopAttrib();
+}
+
 inline void draw(cd_2d& cd2d)
 {
-    //draw filled polygon
     glDisable(GL_LIGHTING);
-    glPushAttrib(GL_CURRENT_BIT);
-    //glColor3d(0.95,0.9,0.9);
-    glColor3d(0.85,0.85,0.95);
-    glCallList(colorid);
-    glPopAttrib();
 
-    //draw todo list
-    glTranslated(0,0,10);
-    glColor3f(0.1f, 0.1f, 0.1f);
-    drawpolylist(cd2d.getTodoList());
+    // If done_list is empty, draw default neutral background fill
+    if (cd2d.getDoneList().empty()) {
+        glPushAttrib(GL_CURRENT_BIT);
+        glColor3d(0.85, 0.85, 0.95);
+        glCallList(colorid);
+        glPopAttrib();
+    }
 
-    //draw done list
-    glTranslated(0,0,10);
-    glPushAttrib(GL_CURRENT_BIT);
-    glColor3f(0.2f,0.2f,0.2f);
-    drawpolylist(cd2d.getDoneList());
-    glPopAttrib();
+    // Draw decomposed pieces with distinct colors
+    if (!cd2d.getDoneList().empty()) {
+        glTranslated(0, 0, 5);
+        drawColoredDoneList(cd2d.getDoneList());
+    }
 
+    // Draw remaining todo list pieces
+    if (!cd2d.getTodoList().empty()) {
+        if (!cd2d.getDoneList().empty()) {
+            glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glColor4f(0.85f, 0.85f, 0.95f, 0.75f);
+            for (const auto& p : cd2d.getTodoList()) {
+                drawFill(p);
+            }
+            glPopAttrib();
+        }
+
+        glTranslated(0, 0, 10);
+        glColor3f(0.1f, 0.1f, 0.1f);
+        glLineWidth(1.5f);
+        drawpolylist(cd2d.getTodoList());
+    }
+
+    // Always draw original polygon boundary and ALL hole outlines on top with bold black lines
+    if (!g_orig_poly.empty()) {
+        glTranslated(0, 0, 15);
+        glLineWidth(2.2f);
+        glColor3f(0.08f, 0.08f, 0.08f);
+        for (const auto& poly : g_orig_poly) {
+            drawPoly(poly);
+        }
+    }
 }
 
 inline void drawPolyListNormal(const list<cd_polygon>& pl)
@@ -488,6 +566,14 @@ inline void stepIRIS(cd_2d& cd2d) {
 
     std::cout << "- Step IRIS: No uncovered interior space found after " << max_attempts 
               << " random trials! (Total regions: " << g_irisComputedRegions.size() << ")" << std::endl;
+}
+
+inline void runIRIS(cd_2d& cd2d) {
+    size_t prev_count;
+    do {
+        prev_count = g_irisComputedRegions.size();
+        stepIRIS(cd2d);
+    } while (g_irisComputedRegions.size() > prev_count);
 }
 
 inline void drawIRIS(cd_2d& cd2d)

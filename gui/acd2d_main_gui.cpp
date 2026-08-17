@@ -124,6 +124,7 @@ int main( int argc, char ** argv)
     }
     
     cd.destroy();
+    g_orig_poly.destroy();
     
     return 0;
 }
@@ -236,6 +237,8 @@ void createPolys(const string& filename, cd_2d& cd)
 		fin.close();
 		
 		poly.normalize();
+		g_orig_poly.destroy();
+		g_orig_poly.copy(poly);
 		cd.addPolygon(poly);
     }
     
@@ -330,7 +333,8 @@ void Keyboard( unsigned char key, int x, int y )
         case 'n': show_normal(); break;
         case 'h': show_hulls(); break;
         case 'I': g_showIRIS=!g_showIRIS; cout<<"- IRIS Visualization: "<<(g_showIRIS?"ON":"OFF")<<endl; break;
-        case 'i': stepIRIS(cd); break;
+        case 'i': runIRIS(cd); break;
+        case '`': stepIRIS(cd); break;
         case 'v': g_vccUseExtension=false; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, false); cout<<"- Delaunay VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
         case 'V': g_vccUseExtension=true; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, true); cout<<"- Extension VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
         case 'r': resetCamera(); break;
@@ -358,7 +362,8 @@ void print_gui_usage()
 	//cout<<left<<setw(offset)<<"b:"<<"show/hide bridges\n";
 	cout<<left<<setw(offset)<<"d:"<<"decompose once\n";
 	cout<<left<<setw(offset)<<"D:"<<"decompose all\n";
-	cout<<left<<setw(offset)<<"i:"<<"place next IRIS seed (step-by-step inflation)\n";
+	cout<<left<<setw(offset)<<"i:"<<"run IRIS until full coverage (until no uncovered space after 10000 trials)\n";
+	cout<<left<<setw(offset)<<"`:"<<"place next IRIS seed (step-by-step inflation)\n";
 	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
 	cout<<left<<setw(offset)<<"v:"<<"toggle Delaunay Vertex Clique Cover (VCC) visualization\n";
 	cout<<left<<setw(offset)<<"V:"<<"toggle Extension Triangulation VCC visualization\n";

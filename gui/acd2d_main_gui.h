@@ -62,6 +62,7 @@ cd_2d cd;
 cd_state state;
 Point2d O;    //center
 double box[4]={0,0,0,0};
+cd_polygon g_orig_poly; // Original polygon retaining all outer and hole boundary rings
 
 
 //-------------------------------------------------------------------
