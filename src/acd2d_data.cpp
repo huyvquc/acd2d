@@ -491,10 +491,15 @@ namespace acd2d
 	{
 		typedef list<cd_vertex*>::iterator VIT;
 	
+		Vector2d dir = p2 - p1;
+		double dist = dir.norm();
+		if (dist < 1e-10) return;
+		dir = dir.normalize();
+
 		cd_line line;
-		line.origin=p1;
-		line.vec=(p1-p2).norm();;
-		line.normal.set(-line.vec[1],line.vec[0]);
+		line.origin = p1;
+		line.vec = dir;
+		line.normal.set(-dir[1], dir[0]);
 	
 		for( DIT id=m_DependList.begin();id!=m_DependList.end();id++ ){
 			if( (*id)==pDG ) continue;
@@ -502,7 +507,7 @@ namespace acd2d
 			(*id)->m_host.findCollEdges(cd,line);
 			if( cd.empty() ) continue;
 			for(VIT i=cd.begin();i!=cd.end();i++){
-				if( (*i)->getU()>0 ){
+				if( (*i)->getU() > 1e-5 && (*i)->getU() < dist - 1e-5 ){
 					pDG->m_depend_on.push_back(*id);
 					(*id)->m_depend_by.push_back(pDG);
 					break;
