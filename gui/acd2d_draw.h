@@ -24,6 +24,7 @@
 #include "acd2d_bridge.h"
 #include "acd2d_iris.h"
 #include "acd2d_vcc.h"
+#include "acd2d_graph.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // openggl headers
@@ -36,7 +37,33 @@ extern Point2d O;
 extern bool g_showIRIS;
 extern bool g_showVCC;
 extern bool g_vccUseExtension;
+extern bool g_showLabels;
+extern bool g_showGraph;
+extern bool g_showWeights;
+extern acd2d::ConvexGraph g_activeGraph;
 int colorid=-1;
+
+inline void updateAcdGraph(cd_2d& cd2d) {
+    std::vector<std::vector<Point2d>> pieces;
+    for (const auto& polys : cd2d.getDoneList()) {
+        for (const auto& poly : polys) {
+            std::vector<Point2d> piece;
+            cd_vertex* ptr = poly.getHead();
+            if (ptr != NULL) {
+                do {
+                    piece.push_back(ptr->getPos());
+                    ptr = ptr->getNext();
+                } while (ptr != poly.getHead());
+            }
+            if (piece.size() >= 3) pieces.push_back(piece);
+        }
+    }
+    if (!pieces.empty()) {
+        g_activeGraph.buildFromPolygons(pieces, "ACD");
+    } else {
+        g_activeGraph.clear();
+    }
+}
 
 inline void drawPoly(const cd_poly& poly) 
 {
@@ -103,22 +130,18 @@ inline void drawColoredDoneList(const list<cd_polygon>& done_list)
     if (done_list.empty()) return;
 
     static float acd_palette[][3] = {
-        {0.90f, 0.35f, 0.35f}, // Coral Red
-        {0.25f, 0.75f, 0.40f}, // Emerald Green
-        {0.30f, 0.55f, 0.90f}, // Royal Blue
-        {0.95f, 0.70f, 0.20f}, // Amber Yellow
-        {0.70f, 0.35f, 0.85f}, // Purple
-        {0.20f, 0.80f, 0.80f}, // Turquoise Cyan
-        {0.95f, 0.45f, 0.65f}, // Rose Pink
-        {0.55f, 0.80f, 0.25f}, // Lime Green
-        {0.95f, 0.55f, 0.25f}, // Bright Orange
-        {0.45f, 0.40f, 0.85f}, // Indigo
-        {0.20f, 0.70f, 0.60f}, // Teal
-        {0.85f, 0.35f, 0.55f}, // Magenta
-        {0.75f, 0.65f, 0.25f}, // Olive Gold
-        {0.50f, 0.65f, 0.85f}, // Sky Blue
-        {0.80f, 0.50f, 0.35f}, // Terracotta
-        {0.40f, 0.75f, 0.75f}  // Aquamarine
+        {0.92f, 0.28f, 0.28f}, // 0: Crimson Red
+        {0.20f, 0.76f, 0.38f}, // 1: Emerald Green
+        {0.25f, 0.52f, 0.92f}, // 2: Royal Blue
+        {0.68f, 0.28f, 0.88f}, // 3: Rich Purple / Violet
+        {0.96f, 0.55f, 0.15f}, // 4: Vivid Orange
+        {0.15f, 0.80f, 0.85f}, // 5: Cyan Turquoise
+        {0.95f, 0.35f, 0.65f}, // 6: Hot Pink
+        {0.55f, 0.80f, 0.20f}, // 7: Lime
+        {0.45f, 0.35f, 0.85f}, // 8: Deep Indigo
+        {0.95f, 0.72f, 0.15f}, // 9: Amber Gold
+        {0.20f, 0.70f, 0.60f}, // 10: Teal
+        {0.85f, 0.35f, 0.55f}  // 11: Magenta
     };
     int num_colors = sizeof(acd_palette) / sizeof(acd_palette[0]);
 
@@ -495,11 +518,39 @@ void Fill(const list<cd_polygon>& pl)
 static std::vector<std::vector<Eigen::Vector2d>> g_irisComputedRegions;
 static std::vector<Eigen::Vector2d> g_irisComputedSeeds;
 static std::vector<drake::geometry::optimization::HPolyhedron> g_irisHPolyhedrons;
+static std::vector<std::vector<Point2d>> g_vccComputedRegions;
+
+inline void updateIrisGraph() {
+    std::vector<std::vector<Point2d>> pieces;
+    for (const auto& r : g_irisComputedRegions) {
+        std::vector<Point2d> piece;
+        for (const auto& v : r) {
+            piece.push_back(Point2d(v(0), v(1)));
+        }
+        if (piece.size() >= 3) pieces.push_back(piece);
+    }
+    if (!pieces.empty()) {
+        g_activeGraph.buildFromPolygons(pieces, "IRIS");
+    } else {
+        g_activeGraph.clear();
+    }
+}
+
+inline void updateVccGraph() {
+    if (!g_vccComputedRegions.empty()) {
+        g_activeGraph.buildFromPolygons(g_vccComputedRegions, g_vccUseExtension ? "VCC-Extension" : "VCC-Delaunay");
+    } else {
+        g_activeGraph.clear();
+    }
+}
 
 inline void resetIRIS() {
     g_irisComputedRegions.clear();
     g_irisComputedSeeds.clear();
     g_irisHPolyhedrons.clear();
+    if (g_activeGraph.decomposition_type == "IRIS") {
+        g_activeGraph.clear();
+    }
 }
 
 inline bool IsPointInPolygon(const Eigen::Vector2d& pt, const std::vector<Eigen::Vector2d>& poly) {
@@ -616,6 +667,7 @@ inline void stepIRIS(cd_2d& cd2d) {
                 g_irisComputedRegions.push_back(verts);
                 g_irisComputedSeeds.push_back(cand);
                 g_showIRIS = true;
+                updateIrisGraph();
                 std::cout << "- Step IRIS: Inflated region #" << g_irisComputedRegions.size()
                           << " at random seed (" << cand(0) << ", " << cand(1) << ")" << std::endl;
                 return;
@@ -633,6 +685,7 @@ inline void runIRIS(cd_2d& cd2d) {
         prev_count = g_irisComputedRegions.size();
         stepIRIS(cd2d);
     } while (g_irisComputedRegions.size() > prev_count);
+    updateIrisGraph();
 }
 
 inline void drawIRIS(cd_2d& cd2d)
@@ -728,6 +781,7 @@ inline void drawIRIS(cd_2d& cd2d)
                 acd2d::IrisWrapper::ComputeIrisDecomposition(all_rings, seeds, box);
             g_irisComputedRegions = decomp.regions;
             g_irisComputedSeeds = decomp.seeds;
+            updateIrisGraph();
         }
     }
 
@@ -772,10 +826,11 @@ inline void drawIRIS(cd_2d& cd2d)
     glPopAttrib();
 }
 
-static std::vector<std::vector<Point2d>> g_vccComputedRegions;
-
 inline void resetVCC() {
     g_vccComputedRegions.clear();
+    if (g_activeGraph.decomposition_type.rfind("VCC", 0) == 0) {
+        g_activeGraph.clear();
+    }
 }
 
 inline void computeVCC(cd_2d& cd2d, bool use_extension = false) {
@@ -787,6 +842,7 @@ inline void computeVCC(cd_2d& cd2d, bool use_extension = false) {
         acd2d::VccWrapper::ComputeVccDecomposition(*todo.begin(), use_extension);
     g_vccComputedRegions = res.regions;
     g_showVCC = true;
+    updateVccGraph();
 }
 
 inline void drawVCC(cd_2d& cd2d)
@@ -801,14 +857,18 @@ inline void drawVCC(cd_2d& cd2d)
     }
 
     static float vcc_colors[][3] = {
-        {0.85f, 0.25f, 0.25f},
-        {0.25f, 0.75f, 0.35f},
-        {0.25f, 0.45f, 0.85f},
-        {0.85f, 0.75f, 0.25f},
-        {0.75f, 0.35f, 0.85f},
-        {0.25f, 0.85f, 0.85f},
-        {0.95f, 0.55f, 0.15f},
-        {0.55f, 0.35f, 0.75f}
+        {0.92f, 0.28f, 0.28f}, // 0: Crimson Red
+        {0.20f, 0.76f, 0.38f}, // 1: Emerald Green
+        {0.25f, 0.52f, 0.92f}, // 2: Royal Blue
+        {0.68f, 0.28f, 0.88f}, // 3: Rich Purple / Violet
+        {0.96f, 0.55f, 0.15f}, // 4: Vivid Orange
+        {0.15f, 0.80f, 0.85f}, // 5: Cyan Turquoise
+        {0.95f, 0.35f, 0.65f}, // 6: Hot Pink
+        {0.55f, 0.80f, 0.20f}, // 7: Lime
+        {0.45f, 0.35f, 0.85f}, // 8: Deep Indigo
+        {0.95f, 0.72f, 0.15f}, // 9: Amber Gold
+        {0.20f, 0.70f, 0.60f}, // 10: Teal
+        {0.85f, 0.35f, 0.55f}  // 11: Magenta
     };
     int num_colors = sizeof(vcc_colors) / sizeof(vcc_colors[0]);
 
@@ -816,15 +876,15 @@ inline void drawVCC(cd_2d& cd2d)
         const auto& verts = g_vccComputedRegions[r];
         float* col = vcc_colors[r % num_colors];
 
-        glColor4f(col[0], col[1], col[2], 0.38f);
+        glColor4f(col[0], col[1], col[2], 0.55f);
         glBegin(GL_TRIANGLE_FAN);
         for (const auto& pt : verts) {
             glVertex2d(pt[0], pt[1]);
         }
         glEnd();
 
-        glLineWidth(1.5f);
-        glColor3f(col[0], col[1], col[2]);
+        glLineWidth(1.8f);
+        glColor3f(col[0] * 0.75f, col[1] * 0.75f, col[2] * 0.75f);
         glBegin(GL_LINE_LOOP);
         for (const auto& pt : verts) {
             glVertex2d(pt[0], pt[1]);

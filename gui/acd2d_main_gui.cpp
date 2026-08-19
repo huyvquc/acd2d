@@ -11,6 +11,47 @@
 ///////////////////////////////////////////////////////////////////////
 #include "acd2d_main_gui.h"
 
+acd2d::ConvexGraph g_activeGraph;
+int g_mainWindow = 0;
+int g_graphWindow = 0;
+
+void DisplayGraphWindow( void )
+{
+    if (g_graphWindow <= 0) return;
+    glutSetWindow(g_graphWindow);
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+    if (w <= 0) w = 580;
+    if (h <= 0) h = 540;
+
+    glClearColor(0.08f, 0.10f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0, w, 0, h);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glDisable(GL_LIGHTING);
+    glDisable(GL_DEPTH_TEST);
+
+    g_activeGraph.drawTreeGraphGL(w, h);
+
+    glutSwapBuffers();
+}
+
+void ReshapeGraphWindow( int w, int h )
+{
+    glViewport(0, 0, (GLsizei)w, (GLsizei)h);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0, w, 0, h);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
 ///////////////////////////////////////////////////////////////////////
 void print_usage(char *name);
 void print_gui_usage();
@@ -25,17 +66,28 @@ bool parseARG(int argc, char ** argv)
                 case 'm': g_concavity_measure=argv[++i]; break;
                 case 'a': g_alpha=atof(argv[++i]); break;
                 case 'b': g_beta=atof(argv[++i]); break;
-                case 'g': g_showGL=false; break;
-                case 's': g_saveDecomposition=true; break;
+                case 'g': 
+                    if(string(argv[i])=="-graph") g_outputGraph=true;
+                    else g_showGL=false; 
+                    break;
+                case 's': 
+                    if(string(argv[i])=="-save_graph" || string(argv[i])=="-sg") g_saveGraph=true;
+                    else g_saveDecomposition=true; 
+                    break;
                 case 'p': g_savePS=true; break;
                 case 'c': g_outputCuts=true; break;
                 case 'i': g_showIRIS=true; break;
+                case 'k': g_outputGraph=true; break;
                 default:
                     if(string(argv[i])=="-iris") g_showIRIS=true;
                     else if(string(argv[i])=="-vcc" || string(argv[i])=="-vcc_del") { g_showVCC=true; g_vccUseExtension=false; }
                     else if(string(argv[i])=="-vcc_ext") { g_showVCC=true; g_vccUseExtension=true; }
                     else if(string(argv[i])=="-no_color" || string(argv[i])=="-nocolor") { g_showColor=false; }
                     else if(string(argv[i])=="-color") { g_showColor=true; }
+                    else if(string(argv[i])=="-graph") { g_outputGraph=true; }
+                    else if(string(argv[i])=="-save_graph" || string(argv[i])=="-sg") { g_saveGraph=true; }
+                    else if(string(argv[i])=="-no_labels") { g_showLabels=false; }
+                    else if(string(argv[i])=="-no_graph") { g_showGraph=false; }
                     break;
             }
         }
@@ -81,6 +133,11 @@ int main( int argc, char ** argv)
     g_showVCC=false;
     g_vccUseExtension=false;
     g_showColor=true;
+    g_showLabels=true;
+    g_showGraph=true;
+    g_showWeights=false;
+    g_saveGraph=false;
+    g_outputGraph=false;
 
     //parse the argument
     if(!parseARG(argc,argv)){
@@ -94,9 +151,11 @@ int main( int argc, char ** argv)
 		//setup glut/gli
 		glutInit( &argc, argv );
 		glutInitDisplayMode( GLUT_RGB|GLUT_DOUBLE|GLUT_DEPTH|GLUT_STENCIL );
-		glutInitWindowSize( 480, 480);
+
+		// 1. Create Main Geometry Window (Polygon View)
+		glutInitWindowSize( 540, 540);
 		glutInitWindowPosition( 50, 50 );
-		glutCreateWindow( "ACD2d" );
+		g_mainWindow = glutCreateWindow( "ACD2d - Polygon View" );
 	
 		InitGL();
 		gli::gliInit();
@@ -104,6 +163,19 @@ int main( int argc, char ** argv)
 		gli::set2DMode(true);
 		glutReshapeFunc(Reshape);
 		glutKeyboardFunc(Keyboard);
+
+		// 2. Create Dedicated Graph Window (Tree Layout View)
+		glutInitWindowSize( 580, 540);
+		glutInitWindowPosition( 610, 50 );
+		g_graphWindow = glutCreateWindow( "ACD2d - Graph View (Tree Layout)" );
+
+		InitGL();
+		glutDisplayFunc(DisplayGraphWindow);
+		glutReshapeFunc(ReshapeGraphWindow);
+		glutKeyboardFunc(Keyboard);
+
+		// Reset active window back to main window for initial polygon loading
+		glutSetWindow(g_mainWindow);
 	
 		/////////////////////////////////////////////////////////////////
 		//loading
@@ -118,11 +190,32 @@ int main( int argc, char ** argv)
     {
         load();
         if(cd.getTodoList().empty()) return 1;
-    	decomposeAll();
-    	if(g_saveDecomposition) save();
-    	if(g_savePS) save_PS();
+
+        if (g_showIRIS) {
+            runIRIS(cd);
+            updateIrisGraph();
+        } else if (g_showVCC) {
+            computeVCC(cd, g_vccUseExtension);
+            updateVccGraph();
+        } else {
+            decomposeAll();
+            updateAcdGraph(cd);
+        }
+
+        if(g_outputGraph || g_saveGraph) {
+            g_activeGraph.printSummary(cout);
+        }
+        if(g_saveGraph) {
+            string json_file = g_filename + "-" + g_activeGraph.decomposition_type + ".graph.json";
+            string dot_file = g_filename + "-" + g_activeGraph.decomposition_type + ".dot";
+            g_activeGraph.exportJSON(json_file);
+            g_activeGraph.exportDOT(dot_file);
+        }
+
+        if(g_saveDecomposition) save();
+        if(g_savePS) save_PS();
 #if SAVE_DIAGONALS	
-    	if(g_outputCuts) outputDiagonals();
+        if(g_outputCuts) outputDiagonals();
 #endif    	
     }
     
@@ -181,6 +274,7 @@ void decompose()
     int time=clock()-start;
     cout<<"- Decompose Once Takes "<<((double)(time))/CLOCKS_PER_SEC<<" secs"<<endl;
     delete measure;
+    updateAcdGraph(cd);
 }
 
 void decomposeAll()
@@ -197,6 +291,7 @@ void decomposeAll()
     int time=clock()-start;
     cout<<"- Decompose All Takes "<<((double)(time))/CLOCKS_PER_SEC<<" secs"<<endl;
     delete measure;
+    updateAcdGraph(cd);
 }
 
 void show_normal()
@@ -325,7 +420,14 @@ void Display( void )
     if(state.show_normal) drawNormal(cd);
     if(state.show_bridge) drawBridge(cd);
     // if(state.show_hull) drawHulls(cd);
+
+    // Draw status and text info in top-left corner
     drawTextInfo(cd);
+
+    // Draw convex component labels at exact center of each convex piece (rendered last)
+    if (g_showLabels && !g_activeGraph.empty()) {
+        g_activeGraph.drawScreenLabelsGL();
+    }
 }
 
 void Keyboard( unsigned char key, int x, int y )
@@ -341,19 +443,47 @@ void Keyboard( unsigned char key, int x, int y )
         case '`': stepIRIS(cd); break;
         case 'v': g_vccUseExtension=false; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, false); cout<<"- Delaunay VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
         case 'V': g_vccUseExtension=true; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, true); cout<<"- Extension VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
+        case 'l': case 'L': g_showLabels=!g_showLabels; cout<<"- Convex Component Labels: "<<(g_showLabels?"ON":"OFF")<<endl; break;
+        case 'g': case 'G': 
+            if (g_graphWindow > 0) {
+                glutSetWindow(g_graphWindow);
+                glutShowWindow();
+            }
+            cout << "- Tree Graph Window Shown/Focused" << endl; 
+            break;
+        case 'w': case 'W': g_showWeights=!g_showWeights; cout<<"- Graph Edge Weights Display: "<<(g_showWeights?"ON":"OFF")<<endl; break;
+        case 'k': case 'K': 
+            if (!g_activeGraph.empty()) {
+                g_activeGraph.printSummary(cout);
+                string json_file = g_filename + "-" + g_activeGraph.decomposition_type + ".graph.json";
+                string dot_file = g_filename + "-" + g_activeGraph.decomposition_type + ".dot";
+                g_activeGraph.exportJSON(json_file);
+                g_activeGraph.exportDOT(dot_file);
+            } else {
+                cout << "! No active decomposition graph. Decompose polygon first (d/D/i/v/V)." << endl;
+            }
+            break;
         case 'r': resetCamera(); break;
         case 'd': decompose(); break;
         case 'D': decomposeAll(); break;
         case 's': save(); break;
         case 'p': save_PS(); break;
-        case ' ': reload(); resetIRIS(); resetVCC(); break;
+        case ' ': reload(); resetIRIS(); resetVCC(); g_activeGraph.clear(); break;
         case '+' : gli::setScale(gli::getScale()*0.95);
                     break;
         case '-' : gli::setScale(gli::getScale()*1.05);
                     break;
     }
 
-    glutPostRedisplay();
+    // Synchronize redraw for both main geometry window and graph window
+    if (g_mainWindow > 0) {
+        glutSetWindow(g_mainWindow);
+        glutPostRedisplay();
+    }
+    if (g_graphWindow > 0) {
+        glutSetWindow(g_graphWindow);
+        glutPostRedisplay();
+    }
 }
 
 //
@@ -364,9 +494,13 @@ void print_gui_usage()
     int offset=20;
     cout<<"GUI Usage:\n";
 	//cout<<left<<setw(offset)<<"b:"<<"show/hide bridges\n";
-	cout<<left<<setw(offset)<<"d:"<<"decompose once\n";
-	cout<<left<<setw(offset)<<"D:"<<"decompose all\n";
+	cout<<left<<setw(offset)<<"d:"<<"decompose once (ACD)\n";
+	cout<<left<<setw(offset)<<"D:"<<"decompose all (ACD)\n";
 	cout<<left<<setw(offset)<<"c:"<<"toggle polygon coloring (ON/OFF)\n";
+	cout<<left<<setw(offset)<<"l:"<<"toggle convex component labels (ON/OFF)\n";
+	cout<<left<<setw(offset)<<"g:"<<"toggle directed weighted graph visualization (ON/OFF)\n";
+	cout<<left<<setw(offset)<<"w:"<<"toggle graph edge weights display (ON/OFF)\n";
+	cout<<left<<setw(offset)<<"k:"<<"print and export graph (JSON + DOT)\n";
 	cout<<left<<setw(offset)<<"i:"<<"run IRIS until full coverage (until no uncovered space after 10000 trials)\n";
 	cout<<left<<setw(offset)<<"`:"<<"place next IRIS seed (step-by-step inflation)\n";
 	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
@@ -386,7 +520,7 @@ void print_gui_usage()
 void print_usage(char * name)
 {
     int offset=20;
-	cout<<"Usage: "<<name<<" [-tmabgsi] [-no_color] [-vcc] [-vcc_ext] *.poly"<<endl;
+	cout<<"Usage: "<<name<<" [-tmabgsi] [-no_color] [-vcc] [-vcc_ext] [-graph] [-save_graph] *.poly"<<endl;
 	cout<<left<<setw(offset)<<"-t value:"<<"tolerance\n";
 	cout<<left<<setw(offset)<<"-m value:"<<"methods: shortestpath (sp), straightline (sl), hybrid1, hybrid2 \n";
 	cout<<left<<setw(offset)<<"-a value:"<<"alpha: weight for concavity \n";
@@ -395,6 +529,10 @@ void print_usage(char * name)
 	cout<<left<<setw(offset)<<"-i / -iris:"<<"visualize Drake IRIS algorithm region\n";
 	cout<<left<<setw(offset)<<"-vcc / -vcc_del:"<<"visualize Delaunay Vertex Clique Cover (VCC) decomposition\n";
 	cout<<left<<setw(offset)<<"-vcc_ext:"<<"visualize Extension Triangulation VCC decomposition\n";
+	cout<<left<<setw(offset)<<"-graph:"<<"generate and print directed weighted graph\n";
+	cout<<left<<setw(offset)<<"-save_graph / -sg:"<<"save graph to JSON (.graph.json) and DOT (.dot)\n";
+	cout<<left<<setw(offset)<<"-no_labels:"<<"disable convex labels\n";
+	cout<<left<<setw(offset)<<"-no_graph:"<<"disable graph visualization\n";
 	cout<<left<<setw(offset)<<"-g:"<<"disable OpenGL \n";
 	cout<<left<<setw(offset)<<"-s:"<<"save decomposition (when GUI is disabled) \n";
 	cout<<left<<setw(offset)<<"-ps:"<<"save decomposition to postscript (PS) file (when GUI is disabled) \n";

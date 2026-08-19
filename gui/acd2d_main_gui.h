@@ -50,6 +50,11 @@ bool   g_showIRIS;
 bool   g_showVCC;
 bool   g_vccUseExtension;
 bool   g_showColor;
+bool   g_showLabels;
+bool   g_showGraph;
+bool   g_showWeights;
+bool   g_saveGraph;
+bool   g_outputGraph;
 
 ///////////////////////////////////////////////////////////////////////
 // additional global data
@@ -91,8 +96,12 @@ void createPolys(const string& filename, cd_2d& cd);
 // functions implemented in .cpp
 void Display( void ); 
 void DisplayForSaving( void );
+void DisplayGraphWindow( void );
+void ReshapeGraphWindow( int w, int h );
 void Keyboard( unsigned char key, int x, int y ); 
 void resetCamera();
+extern int g_mainWindow;
+extern int g_graphWindow;
 
 //-----------------------------------------------------------------------------
 // regular openGL callback functions
