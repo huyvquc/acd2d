@@ -49,6 +49,7 @@ bool   g_outputCuts;
 bool   g_showIRIS;
 bool   g_showVCC;
 bool   g_vccUseExtension;
+bool   g_showColor;
 
 ///////////////////////////////////////////////////////////////////////
 // additional global data

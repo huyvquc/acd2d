@@ -94,6 +94,7 @@ inline void drawpolylist(const list<cd_polygon>& pl)
 }
 
 extern cd_polygon g_orig_poly;
+extern bool g_showColor;
 
 void drawFill(const cd_polygon& pl);
 
@@ -126,22 +127,35 @@ inline void drawColoredDoneList(const list<cd_polygon>& done_list)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // 1. Draw colored interior fills strictly clipped to valid polygon interior via Stencil Test
+    if (colorid >= 0) {
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_EQUAL, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    }
+
     int idx = 0;
     for (const auto& polys : done_list) {
         float* col = acd_palette[idx % num_colors];
-
-        // 1. Draw colored interior fill
         glColor4f(col[0], col[1], col[2], 0.50f);
         drawFill(polys);
+        idx++;
+    }
 
-        // 2. Draw partition boundary line between pieces
-        glLineWidth(1.2f);
+    // 2. Draw partition boundary lines between pieces (clipped to polygon interior so they do not cross into holes)
+    idx = 0;
+    glLineWidth(1.2f);
+    for (const auto& polys : done_list) {
+        float* col = acd_palette[idx % num_colors];
         glColor3f(col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f);
         for (const auto& poly : polys) {
             drawPoly(poly);
         }
-
         idx++;
+    }
+
+    if (colorid >= 0) {
+        glDisable(GL_STENCIL_TEST);
     }
 
     glPopAttrib();
@@ -151,6 +165,43 @@ inline void draw(cd_2d& cd2d)
 {
     glDisable(GL_LIGHTING);
 
+    if (!g_showColor) {
+        // Classic uncolored wireframe rendering
+        glPushAttrib(GL_CURRENT_BIT);
+        glColor3d(0.85, 0.85, 0.95);
+        glCallList(colorid);
+        glPopAttrib();
+
+        // draw todo list
+        if (!cd2d.getTodoList().empty()) {
+            glTranslated(0, 0, 10);
+            glColor3f(0.1f, 0.1f, 0.1f);
+            glLineWidth(1.5f);
+            drawpolylist(cd2d.getTodoList());
+        }
+
+        // draw done list
+        if (!cd2d.getDoneList().empty()) {
+            glTranslated(0, 0, 10);
+            glPushAttrib(GL_CURRENT_BIT);
+            glColor3f(0.2f, 0.2f, 0.2f);
+            glLineWidth(1.5f);
+            drawpolylist(cd2d.getDoneList());
+            glPopAttrib();
+        }
+
+        // Always draw original polygon boundary and hole outlines on top
+        if (!g_orig_poly.empty()) {
+            glTranslated(0, 0, 15);
+            glLineWidth(2.2f);
+            glColor3f(0.08f, 0.08f, 0.08f);
+            for (const auto& poly : g_orig_poly) {
+                drawPoly(poly);
+            }
+        }
+        return;
+    }
+
     // If done_list is empty, draw default neutral background fill
     if (cd2d.getDoneList().empty()) {
         glPushAttrib(GL_CURRENT_BIT);
@@ -159,7 +210,7 @@ inline void draw(cd_2d& cd2d)
         glPopAttrib();
     }
 
-    // Draw decomposed pieces with distinct colors
+    // Draw decomposed pieces with distinct colors (stencil-clipped)
     if (!cd2d.getDoneList().empty()) {
         glTranslated(0, 0, 5);
         drawColoredDoneList(cd2d.getDoneList());
@@ -169,11 +220,19 @@ inline void draw(cd_2d& cd2d)
     if (!cd2d.getTodoList().empty()) {
         if (!cd2d.getDoneList().empty()) {
             glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT);
+            if (colorid >= 0) {
+                glEnable(GL_STENCIL_TEST);
+                glStencilFunc(GL_EQUAL, 1, 0xFF);
+                glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+            }
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glColor4f(0.85f, 0.85f, 0.95f, 0.75f);
             for (const auto& p : cd2d.getTodoList()) {
                 drawFill(p);
+            }
+            if (colorid >= 0) {
+                glDisable(GL_STENCIL_TEST);
             }
             glPopAttrib();
         }

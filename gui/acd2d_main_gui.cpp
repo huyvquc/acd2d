@@ -34,6 +34,8 @@ bool parseARG(int argc, char ** argv)
                     if(string(argv[i])=="-iris") g_showIRIS=true;
                     else if(string(argv[i])=="-vcc" || string(argv[i])=="-vcc_del") { g_showVCC=true; g_vccUseExtension=false; }
                     else if(string(argv[i])=="-vcc_ext") { g_showVCC=true; g_vccUseExtension=true; }
+                    else if(string(argv[i])=="-no_color" || string(argv[i])=="-nocolor") { g_showColor=false; }
+                    else if(string(argv[i])=="-color") { g_showColor=true; }
                     break;
             }
         }
@@ -78,6 +80,7 @@ int main( int argc, char ** argv)
     g_showIRIS=false;
     g_showVCC=false;
     g_vccUseExtension=false;
+    g_showColor=true;
 
     //parse the argument
     if(!parseARG(argc,argv)){
@@ -332,6 +335,7 @@ void Keyboard( unsigned char key, int x, int y )
         //case 'b': show_bridge(); break;
         case 'n': show_normal(); break;
         case 'h': show_hulls(); break;
+        case 'c': case 'C': g_showColor=!g_showColor; cout<<"- Polygon Coloring: "<<(g_showColor?"ON":"OFF")<<endl; break;
         case 'I': g_showIRIS=!g_showIRIS; cout<<"- IRIS Visualization: "<<(g_showIRIS?"ON":"OFF")<<endl; break;
         case 'i': runIRIS(cd); break;
         case '`': stepIRIS(cd); break;
@@ -362,6 +366,7 @@ void print_gui_usage()
 	//cout<<left<<setw(offset)<<"b:"<<"show/hide bridges\n";
 	cout<<left<<setw(offset)<<"d:"<<"decompose once\n";
 	cout<<left<<setw(offset)<<"D:"<<"decompose all\n";
+	cout<<left<<setw(offset)<<"c:"<<"toggle polygon coloring (ON/OFF)\n";
 	cout<<left<<setw(offset)<<"i:"<<"run IRIS until full coverage (until no uncovered space after 10000 trials)\n";
 	cout<<left<<setw(offset)<<"`:"<<"place next IRIS seed (step-by-step inflation)\n";
 	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
@@ -381,11 +386,12 @@ void print_gui_usage()
 void print_usage(char * name)
 {
     int offset=20;
-	cout<<"Usage: "<<name<<" [-tmabgsi] [-vcc] [-vcc_ext] *.poly"<<endl;
+	cout<<"Usage: "<<name<<" [-tmabgsi] [-no_color] [-vcc] [-vcc_ext] *.poly"<<endl;
 	cout<<left<<setw(offset)<<"-t value:"<<"tolerance\n";
 	cout<<left<<setw(offset)<<"-m value:"<<"methods: shortestpath (sp), straightline (sl), hybrid1, hybrid2 \n";
 	cout<<left<<setw(offset)<<"-a value:"<<"alpha: weight for concavity \n";
 	cout<<left<<setw(offset)<<"-b value:"<<"beta: weight for distance \n";
+	cout<<left<<setw(offset)<<"-no_color:"<<"disable colored polygon rendering\n";
 	cout<<left<<setw(offset)<<"-i / -iris:"<<"visualize Drake IRIS algorithm region\n";
 	cout<<left<<setw(offset)<<"-vcc / -vcc_del:"<<"visualize Delaunay Vertex Clique Cover (VCC) decomposition\n";
 	cout<<left<<setw(offset)<<"-vcc_ext:"<<"visualize Extension Triangulation VCC decomposition\n";
