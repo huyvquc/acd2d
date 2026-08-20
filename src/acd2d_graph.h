@@ -754,7 +754,14 @@ public:
 
                 if (same_level) {
                     // Draw curved arc for horizontal neighbors
-                    double arc_height = (u < v) ? 22.0 : -22.0;
+                    int idx_u = 0, idx_v = 0;
+                    const auto& layer = layers[depth[u]];
+                    for (int k = 0; k < static_cast<int>(layer.size()); ++k) {
+                        if (layer[k] == u) idx_u = k;
+                        if (layer[k] == v) idx_v = k;
+                    }
+                    int span = std::abs(idx_u - idx_v);
+                    double arc_height = (u < v ? 1.0 : -1.0) * (span * 28.0 + 10.0);
                     double mid_x = 0.5 * (x1 + x2);
                     double mid_y = 0.5 * (y1 + y2) + arc_height;
 
