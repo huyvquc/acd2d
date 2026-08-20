@@ -441,8 +441,8 @@ void Keyboard( unsigned char key, int x, int y )
         case 'I': g_showIRIS=!g_showIRIS; cout<<"- IRIS Visualization: "<<(g_showIRIS?"ON":"OFF")<<endl; break;
         case 'i': runIRIS(cd); break;
         case '`': stepIRIS(cd); break;
-        case 'v': g_vccUseExtension=false; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, false); cout<<"- Delaunay VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
-        case 'V': g_vccUseExtension=true; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, true); cout<<"- Extension VCC Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
+        case 'v': g_vccUseExtension=false; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, false); cout<<"- Delaunay VCC (ReduVCC) Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
+        case 'V': g_vccUseExtension=true; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, true); cout<<"- Extension VCC (ReduVCC) Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
         case 'l': case 'L': g_showLabels=!g_showLabels; cout<<"- Convex Component Labels: "<<(g_showLabels?"ON":"OFF")<<endl; break;
         case 'g': case 'G': 
             if (g_graphWindow > 0) {

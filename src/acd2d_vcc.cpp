@@ -78,7 +78,11 @@ VccDecompositionResult VccWrapper::ComputeVccDecomposition(const cd_polygon& pol
         std::vector<::Polygon> vcc_polygons;
 
         try {
-            vcc_polygons = cliquecover.get_cliques_smalladj_naive();
+            vcc_polygons = cliquecover.get_cliques_reduvcc();
+            if (vcc_polygons.empty()) {
+                std::cerr << "! WARNING [VCC Solver]: ReduVCC returned no cliques, falling back to naive greedy clique cover." << std::endl;
+                vcc_polygons = cliquecover.get_cliques_smalladj_naive();
+            }
         } catch (const std::exception& e) {
             std::cerr << "! WARNING [VCC Solver]: Fallback to naive greedy clique cover: " << e.what() << std::endl;
             vcc_polygons = cliquecover.get_cliques_smalladj_naive();
@@ -108,7 +112,7 @@ VccDecompositionResult VccWrapper::ComputeVccDecomposition(const cd_polygon& pol
     auto end_time = std::chrono::high_resolution_clock::now();
     result.computation_time_sec = std::chrono::duration<double>(end_time - start_time).count();
 
-    std::cout << "- VCC Convex Decomposition (" << (use_extension ? "Extension Triangulation" : "Constrained Delaunay")
+    std::cout << "- VCC Convex Decomposition (ReduVCC - " << (use_extension ? "Extension Triangulation" : "Constrained Delaunay")
               << ") completed: " << result.regions.size() << " convex regions in "
               << result.computation_time_sec << " seconds." << std::endl;
 
