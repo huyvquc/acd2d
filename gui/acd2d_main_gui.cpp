@@ -501,7 +501,7 @@ void print_gui_usage()
 	cout<<left<<setw(offset)<<"g:"<<"toggle directed weighted graph visualization (ON/OFF)\n";
 	cout<<left<<setw(offset)<<"w:"<<"toggle graph edge weights display (ON/OFF)\n";
 	cout<<left<<setw(offset)<<"k:"<<"print and export graph (JSON + DOT)\n";
-	cout<<left<<setw(offset)<<"i:"<<"run IRIS until full coverage (until no uncovered space after 10000 trials)\n";
+	cout<<left<<setw(offset)<<"i:"<<"run IRIS until >= 98% space coverage is reached\n";
 	cout<<left<<setw(offset)<<"`:"<<"place next IRIS seed (step-by-step inflation)\n";
 	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
 	cout<<left<<setw(offset)<<"v:"<<"toggle Delaunay Vertex Clique Cover (VCC) visualization\n";

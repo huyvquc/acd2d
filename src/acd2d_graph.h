@@ -870,16 +870,6 @@ public:
             for (char c : nodes[u].label) {
                 glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, c);
             }
-
-            // Subtitle label below node (Centroid coordinates)
-            char sub_buf[32];
-            std::sprintf(sub_buf, "(%.1f, %.1f)", nodes[u].centroid[0], nodes[u].centroid[1]);
-            double sub_w = std::string(sub_buf).length() * 5.5;
-            glColor3f(0.80f, 0.85f, 0.95f);
-            glRasterPos2f(x - sub_w * 0.5, y - node_radius - 14.0);
-            for (char* p = sub_buf; *p; ++p) {
-                glutBitmapCharacter(GLUT_BITMAP_HELVETICA_10, *p);
-            }
         }
 
         glPopAttrib();

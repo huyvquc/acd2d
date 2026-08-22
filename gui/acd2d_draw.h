@@ -566,6 +566,65 @@ inline bool IsPointInPolygon(const Eigen::Vector2d& pt, const std::vector<Eigen:
     return inside;
 }
 
+inline double computeIrisFreeSpaceCoverage(
+    const std::vector<Eigen::Vector2d>& outer_vertices,
+    const std::vector<std::vector<Eigen::Vector2d>>& holes_vertices,
+    const std::vector<drake::geometry::optimization::HPolyhedron>& regions,
+    const double bbox[4],
+    int num_samples = 2000,
+    Eigen::Vector2d* out_uncovered_seed = nullptr
+) {
+    if (outer_vertices.empty()) return 0.0;
+
+    auto IsValidFreeSpace = [&](const Eigen::Vector2d& pt) -> bool {
+        if (!IsPointInPolygon(pt, outer_vertices)) return false;
+        for (const auto& hole : holes_vertices) {
+            if (IsPointInPolygon(pt, hole)) return false;
+        }
+        return true;
+    };
+
+    static std::random_device rd;
+    static std::mt19937 rng(rd());
+    std::uniform_real_distribution<double> dist_x(bbox[0], bbox[1]);
+    std::uniform_real_distribution<double> dist_y(bbox[2], bbox[3]);
+
+    int valid_samples = 0;
+    int covered_samples = 0;
+    std::vector<Eigen::Vector2d> uncovered_candidates;
+
+    int max_trials = num_samples * 50;
+    int trial = 0;
+    while (valid_samples < num_samples && trial < max_trials) {
+        trial++;
+        Eigen::Vector2d pt(dist_x(rng), dist_y(rng));
+        if (!IsValidFreeSpace(pt)) continue;
+
+        valid_samples++;
+        bool is_covered = false;
+        for (const auto& r : regions) {
+            if (r.PointInSet(pt, 1e-2)) {
+                is_covered = true;
+                break;
+            }
+        }
+
+        if (is_covered) {
+            covered_samples++;
+        } else {
+            uncovered_candidates.push_back(pt);
+        }
+    }
+
+    if (out_uncovered_seed && !uncovered_candidates.empty()) {
+        std::uniform_int_distribution<size_t> idx_dist(0, uncovered_candidates.size() - 1);
+        *out_uncovered_seed = uncovered_candidates[idx_dist(rng)];
+    }
+
+    if (valid_samples == 0) return 1.0;
+    return static_cast<double>(covered_samples) / static_cast<double>(valid_samples);
+}
+
 inline void stepIRIS(cd_2d& cd2d) {
     const list<cd_polygon>& todo = cd2d.getTodoList();
     if (todo.empty() || todo.begin()->empty()) return;
@@ -597,13 +656,19 @@ inline void stepIRIS(cd_2d& cd2d) {
         }
     }
 
-    auto IsValidFreeSpaceSeed = [&](const Eigen::Vector2d& cand) -> bool {
-        if (!IsPointInPolygon(cand, outer_vertices)) return false;
-        for (const auto& hole : holes_vertices) {
-            if (IsPointInPolygon(cand, hole)) return false;
-        }
-        return true;
-    };
+    // Check current space coverage (target: >= 98%)
+    Eigen::Vector2d cand;
+    double current_coverage = computeIrisFreeSpaceCoverage(
+        outer_vertices, holes_vertices, g_irisHPolyhedrons, box, 2000, &cand
+    );
+
+    if (current_coverage >= 0.98) {
+        std::cout << "- Step IRIS: Space coverage is already at " 
+                  << std::fixed << std::setprecision(1) << (current_coverage * 100.0) 
+                  << "% (>= 98% target reached with " << g_irisComputedRegions.size() 
+                  << " regions)" << std::endl;
+        return;
+    }
 
     // Domain & Obstacles
     Eigen::Matrix<double, 4, 2> A_dom;
@@ -637,28 +702,8 @@ inline void stepIRIS(cd_2d& cd2d) {
         }
     }
 
-    double min_x = box[0], max_x = box[1];
-    double min_y = box[2], max_y = box[3];
-
-    static std::random_device rd;
-    static std::mt19937 rng(rd());
-    std::uniform_real_distribution<double> dist_x(min_x, max_x);
-    std::uniform_real_distribution<double> dist_y(min_y, max_y);
-
-    int max_attempts = 10000;
-    for (int attempt = 0; attempt < max_attempts; ++attempt) {
-        Eigen::Vector2d cand(dist_x(rng), dist_y(rng));
-        if (!IsValidFreeSpaceSeed(cand)) continue;
-
-        bool covered = false;
-        for (const auto& region : g_irisHPolyhedrons) {
-            if (region.PointInSet(cand, 1e-2)) {
-                covered = true;
-                break;
-            }
-        }
-        if (covered) continue;
-
+    // Attempt inflation from uncovered seed candidates
+    for (int retry = 0; retry < 50; ++retry) {
         try {
             drake::geometry::optimization::HPolyhedron region = acd2d::IrisWrapper::InflateRegion(obstacles, cand, domain);
             std::vector<Eigen::Vector2d> verts = acd2d::IrisWrapper::GetHPolyhedronVertices(region);
@@ -668,23 +713,35 @@ inline void stepIRIS(cd_2d& cd2d) {
                 g_irisComputedSeeds.push_back(cand);
                 g_showIRIS = true;
                 updateIrisGraph();
+
+                double new_cov = computeIrisFreeSpaceCoverage(
+                    outer_vertices, holes_vertices, g_irisHPolyhedrons, box, 2000, nullptr
+                );
                 std::cout << "- Step IRIS: Inflated region #" << g_irisComputedRegions.size()
-                          << " at random seed (" << cand(0) << ", " << cand(1) << ")" << std::endl;
+                          << " at seed (" << cand(0) << ", " << cand(1) 
+                          << "). Current coverage: " << std::fixed << std::setprecision(1) 
+                          << (new_cov * 100.0) << "% / 98.0%" << std::endl;
                 return;
             }
         } catch (...) {}
+
+        computeIrisFreeSpaceCoverage(outer_vertices, holes_vertices, g_irisHPolyhedrons, box, 2000, &cand);
     }
 
-    std::cout << "- Step IRIS: No uncovered interior space found after " << max_attempts 
-              << " random trials! (Total regions: " << g_irisComputedRegions.size() << ")" << std::endl;
+    std::cout << "- Step IRIS: Could not find further valid seeds. Coverage: " 
+              << std::fixed << std::setprecision(1) << (current_coverage * 100.0) << "%." << std::endl;
 }
 
 inline void runIRIS(cd_2d& cd2d) {
-    size_t prev_count;
-    do {
-        prev_count = g_irisComputedRegions.size();
+    std::cout << "- Running IRIS until >= 98% space coverage is reached..." << std::endl;
+    int max_regions = 100;
+    while (g_irisComputedRegions.size() < (size_t)max_regions) {
+        size_t prev_count = g_irisComputedRegions.size();
         stepIRIS(cd2d);
-    } while (g_irisComputedRegions.size() > prev_count);
+        if (g_irisComputedRegions.size() == prev_count) {
+            break;
+        }
+    }
     updateIrisGraph();
 }
 
