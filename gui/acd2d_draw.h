@@ -129,22 +129,6 @@ inline void drawColoredDoneList(const list<cd_polygon>& done_list)
 {
     if (done_list.empty()) return;
 
-    static float acd_palette[][3] = {
-        {0.92f, 0.28f, 0.28f}, // 0: Crimson Red
-        {0.20f, 0.76f, 0.38f}, // 1: Emerald Green
-        {0.25f, 0.52f, 0.92f}, // 2: Royal Blue
-        {0.68f, 0.28f, 0.88f}, // 3: Rich Purple / Violet
-        {0.96f, 0.55f, 0.15f}, // 4: Vivid Orange
-        {0.15f, 0.80f, 0.85f}, // 5: Cyan Turquoise
-        {0.95f, 0.35f, 0.65f}, // 6: Hot Pink
-        {0.55f, 0.80f, 0.20f}, // 7: Lime
-        {0.45f, 0.35f, 0.85f}, // 8: Deep Indigo
-        {0.95f, 0.72f, 0.15f}, // 9: Amber Gold
-        {0.20f, 0.70f, 0.60f}, // 10: Teal
-        {0.85f, 0.35f, 0.55f}  // 11: Magenta
-    };
-    int num_colors = sizeof(acd_palette) / sizeof(acd_palette[0]);
-
     glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_LINE_BIT);
     glDisable(GL_LIGHTING);
     glEnable(GL_BLEND);
@@ -159,7 +143,8 @@ inline void drawColoredDoneList(const list<cd_polygon>& done_list)
 
     int idx = 0;
     for (const auto& polys : done_list) {
-        float* col = acd_palette[idx % num_colors];
+        float col[3];
+        acd2d::getDistinctColor(idx, col);
         glColor4f(col[0], col[1], col[2], 0.50f);
         drawFill(polys);
         idx++;
@@ -169,7 +154,8 @@ inline void drawColoredDoneList(const list<cd_polygon>& done_list)
     idx = 0;
     glLineWidth(1.2f);
     for (const auto& polys : done_list) {
-        float* col = acd_palette[idx % num_colors];
+        float col[3];
+        acd2d::getDistinctColor(idx, col);
         glColor3f(col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f);
         for (const auto& poly : polys) {
             drawPoly(poly);
@@ -522,15 +508,22 @@ static std::vector<std::vector<Point2d>> g_vccComputedRegions;
 
 inline void updateIrisGraph() {
     std::vector<std::vector<Point2d>> pieces;
-    for (const auto& r : g_irisComputedRegions) {
+    std::vector<Point2d> seeds;
+    for (size_t i = 0; i < g_irisComputedRegions.size(); ++i) {
+        const auto& r = g_irisComputedRegions[i];
         std::vector<Point2d> piece;
         for (const auto& v : r) {
             piece.push_back(Point2d(v(0), v(1)));
         }
-        if (piece.size() >= 3) pieces.push_back(piece);
+        if (piece.size() >= 3) {
+            pieces.push_back(piece);
+            if (i < g_irisComputedSeeds.size()) {
+                seeds.push_back(Point2d(g_irisComputedSeeds[i](0), g_irisComputedSeeds[i](1)));
+            }
+        }
     }
     if (!pieces.empty()) {
-        g_activeGraph.buildFromPolygons(pieces, "IRIS");
+        g_activeGraph.buildFromPolygons(pieces, "IRIS", seeds);
     } else {
         g_activeGraph.clear();
     }
@@ -842,28 +835,19 @@ inline void drawIRIS(cd_2d& cd2d)
         }
     }
 
-    static float colors[][3] = {
-        {0.0f, 0.8f, 0.8f},
-        {0.9f, 0.4f, 0.2f},
-        {0.3f, 0.8f, 0.3f},
-        {0.8f, 0.3f, 0.8f},
-        {0.9f, 0.8f, 0.2f},
-        {0.2f, 0.5f, 0.9f}
-    };
-    int num_colors = sizeof(colors) / sizeof(colors[0]);
-
     for (size_t r = 0; r < g_irisComputedRegions.size(); ++r) {
         const auto& iris_verts = g_irisComputedRegions[r];
-        float* col = colors[r % num_colors];
+        float col[3];
+        acd2d::getDistinctColor(static_cast<int>(r), col);
 
-        glColor4f(col[0], col[1], col[2], 0.35f);
+        glColor4f(col[0], col[1], col[2], 0.40f);
         glBegin(GL_TRIANGLE_FAN);
         for (const auto& v : iris_verts) {
             glVertex2d(v(0), v(1));
         }
         glEnd();
 
-        glLineWidth(1.0f);
+        glLineWidth(1.2f);
         glColor3f(col[0], col[1], col[2]);
         glBegin(GL_LINE_LOOP);
         for (const auto& v : iris_verts) {
@@ -913,25 +897,10 @@ inline void drawVCC(cd_2d& cd2d)
         computeVCC(cd2d, g_vccUseExtension);
     }
 
-    static float vcc_colors[][3] = {
-        {0.92f, 0.28f, 0.28f}, // 0: Crimson Red
-        {0.20f, 0.76f, 0.38f}, // 1: Emerald Green
-        {0.25f, 0.52f, 0.92f}, // 2: Royal Blue
-        {0.68f, 0.28f, 0.88f}, // 3: Rich Purple / Violet
-        {0.96f, 0.55f, 0.15f}, // 4: Vivid Orange
-        {0.15f, 0.80f, 0.85f}, // 5: Cyan Turquoise
-        {0.95f, 0.35f, 0.65f}, // 6: Hot Pink
-        {0.55f, 0.80f, 0.20f}, // 7: Lime
-        {0.45f, 0.35f, 0.85f}, // 8: Deep Indigo
-        {0.95f, 0.72f, 0.15f}, // 9: Amber Gold
-        {0.20f, 0.70f, 0.60f}, // 10: Teal
-        {0.85f, 0.35f, 0.55f}  // 11: Magenta
-    };
-    int num_colors = sizeof(vcc_colors) / sizeof(vcc_colors[0]);
-
     for (size_t r = 0; r < g_vccComputedRegions.size(); ++r) {
         const auto& verts = g_vccComputedRegions[r];
-        float* col = vcc_colors[r % num_colors];
+        float col[3];
+        acd2d::getDistinctColor(static_cast<int>(r), col);
 
         glColor4f(col[0], col[1], col[2], 0.55f);
         glBegin(GL_TRIANGLE_FAN);

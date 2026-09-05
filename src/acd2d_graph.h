@@ -28,6 +28,90 @@
 namespace acd2d {
 
 /**
+ * @brief Returns maximally distinct, high-contrast colors for arbitrary decomposition piece indices.
+ * Features 48 carefully curated distinct hues + golden-ratio HSV distribution for n >= 48.
+ */
+inline void getDistinctColor(int index, float out_col[3]) {
+    static const float palette[48][3] = {
+        {0.92f, 0.18f, 0.22f}, // 0: Crimson Red
+        {0.12f, 0.72f, 0.38f}, // 1: Emerald Green
+        {0.18f, 0.45f, 0.95f}, // 2: Royal Blue
+        {0.98f, 0.52f, 0.08f}, // 3: Vivid Orange
+        {0.68f, 0.22f, 0.88f}, // 4: Rich Purple
+        {0.05f, 0.82f, 0.86f}, // 5: Bright Cyan Turquoise
+        {0.96f, 0.22f, 0.60f}, // 6: Hot Pink
+        {0.52f, 0.82f, 0.14f}, // 7: Lime Green
+        {0.96f, 0.78f, 0.08f}, // 8: Amber Gold
+        {0.34f, 0.22f, 0.88f}, // 9: Deep Indigo
+        {0.08f, 0.68f, 0.62f}, // 10: Teal
+        {0.95f, 0.40f, 0.35f}, // 11: Coral Salmon
+        {0.22f, 0.86f, 0.60f}, // 12: Mint Green
+        {0.70f, 0.12f, 0.32f}, // 13: Wine Burgundy
+        {0.10f, 0.62f, 0.96f}, // 14: Sky Blue
+        {0.78f, 0.86f, 0.10f}, // 15: Electric Chartreuse
+        {0.86f, 0.14f, 0.78f}, // 16: Vivid Magenta
+        {0.82f, 0.58f, 0.14f}, // 17: Mustard Ochre
+        {0.48f, 0.55f, 0.90f}, // 18: Periwinkle
+        {0.42f, 0.66f, 0.18f}, // 19: Olive Drab
+        {0.88f, 0.34f, 0.14f}, // 20: Rust Orange
+        {0.74f, 0.48f, 0.92f}, // 21: Lavender
+        {0.14f, 0.54f, 0.30f}, // 22: Pine Forest Green
+        {0.18f, 0.92f, 0.78f}, // 23: Aquamarine
+        {0.56f, 0.16f, 0.16f}, // 24: Deep Maroon
+        {0.24f, 0.52f, 0.72f}, // 25: Steel Blue
+        {1.00f, 0.38f, 0.05f}, // 26: Tangerine
+        {0.00f, 0.64f, 0.44f}, // 27: Jade Green
+        {0.52f, 0.14f, 0.58f}, // 28: Dark Plum
+        {0.88f, 0.68f, 0.18f}, // 29: Goldenrod
+        {0.00f, 0.52f, 0.82f}, // 30: Cerulean Blue
+        {0.82f, 0.10f, 0.42f}, // 31: Ruby Red
+        {0.20f, 0.72f, 0.10f}, // 32: Kelly Green
+        {0.62f, 0.36f, 0.14f}, // 33: Bronze Chocolate
+        {0.75f, 0.20f, 0.52f}, // 34: Violet Red
+        {0.05f, 0.46f, 0.62f}, // 35: Peacock Blue
+        {0.92f, 0.62f, 0.55f}, // 36: Dusty Rose
+        {0.40f, 0.78f, 0.65f}, // 37: Seafoam
+        {0.60f, 0.45f, 0.78f}, // 38: Amethyst
+        {0.85f, 0.85f, 0.25f}, // 39: Lemon Yellow
+        {0.30f, 0.30f, 0.75f}, // 40: Cobalt Blue
+        {0.85f, 0.45f, 0.65f}, // 41: Bubblegum Pink
+        {0.25f, 0.65f, 0.25f}, // 42: Clover Green
+        {0.90f, 0.55f, 0.30f}, // 43: Apricot
+        {0.50f, 0.25f, 0.65f}, // 44: Byzantium
+        {0.15f, 0.75f, 0.85f}, // 45: Ice Blue
+        {0.75f, 0.30f, 0.25f}, // 46: Terracotta
+        {0.60f, 0.75f, 0.30f}  // 47: Willow Green
+    };
+    const int num_palette = sizeof(palette) / sizeof(palette[0]);
+    if (index < num_palette && index >= 0) {
+        out_col[0] = palette[index][0];
+        out_col[1] = palette[index][1];
+        out_col[2] = palette[index][2];
+        return;
+    }
+
+    // Dynamic Golden-Ratio HSV distribution for n >= 48
+    double h = std::fmod(index * 0.618033988749895, 1.0);
+    double s = 0.65 + 0.30 * std::fmod(index * 0.38196601125, 1.0);
+    double v = 0.80 + 0.18 * std::fmod(index * 0.27182818284, 1.0);
+
+    int sector = static_cast<int>(h * 6.0);
+    double f = h * 6.0 - sector;
+    double p = v * (1.0 - s);
+    double q = v * (1.0 - f * s);
+    double t = v * (1.0 - (1.0 - f) * s);
+
+    switch (sector % 6) {
+        case 0: out_col[0] = (float)v; out_col[1] = (float)t; out_col[2] = (float)p; break;
+        case 1: out_col[0] = (float)q; out_col[1] = (float)v; out_col[2] = (float)p; break;
+        case 2: out_col[0] = (float)p; out_col[1] = (float)v; out_col[2] = (float)t; break;
+        case 3: out_col[0] = (float)p; out_col[1] = (float)q; out_col[2] = (float)v; break;
+        case 4: out_col[0] = (float)t; out_col[1] = (float)p; out_col[2] = (float)v; break;
+        case 5: out_col[0] = (float)v; out_col[1] = (float)p; out_col[2] = (float)q; break;
+    }
+}
+
+/**
  * @brief Directed edge in the convex decomposition graph.
  */
 struct GraphEdge {
@@ -314,7 +398,8 @@ public:
      */
     void buildFromPolygons(
         const std::vector<std::vector<Point2d>>& pieces,
-        const std::string& type_name
+        const std::string& type_name,
+        const std::vector<Point2d>& custom_centers = {}
     ) {
         clear();
         decomposition_type = type_name;
@@ -332,6 +417,9 @@ public:
             nodes[i].label = ss.str();
             nodes[i].vertices = pieces[i];
             computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
+            if (i < static_cast<int>(custom_centers.size())) {
+                nodes[i].centroid = custom_centers[i];
+            }
         }
 
         // Step 2: Determine adjacency and construct directed edges (weight = 0.0)
@@ -343,7 +431,7 @@ public:
                     // Directed edge i -> j
                     GraphEdge e_ij;
                     e_ij.target = j;
-                    e_ij.weight = 0.0; // Fixed to 0.0 as requested
+                    e_ij.weight = 0.0; // Fixed to 0.0 
                     e_ij.shared_length = shared_len;
                     e_ij.interface_pt = if_pt;
                     nodes[i].adj.push_back(e_ij);
@@ -351,7 +439,7 @@ public:
                     // Directed edge j -> i
                     GraphEdge e_ji;
                     e_ji.target = i;
-                    e_ji.weight = 0.0; // Fixed to 0.0 as requested
+                    e_ji.weight = 0.0; // Fixed to 0.0 
                     e_ji.shared_length = shared_len;
                     e_ji.interface_pt = if_pt;
                     nodes[j].adj.push_back(e_ji);
@@ -710,23 +798,6 @@ public:
         glRasterPos2f(25.0, win_height - 50.0);
         for (char c : info_str) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, c);
 
-        // Palette for node colors (matches polygon coloring)
-        static float palette[][3] = {
-            {0.92f, 0.28f, 0.28f}, // 0: Crimson Red
-            {0.20f, 0.76f, 0.38f}, // 1: Emerald Green
-            {0.25f, 0.52f, 0.92f}, // 2: Royal Blue
-            {0.68f, 0.28f, 0.88f}, // 3: Rich Purple / Violet
-            {0.96f, 0.55f, 0.15f}, // 4: Vivid Orange
-            {0.15f, 0.80f, 0.85f}, // 5: Cyan Turquoise
-            {0.95f, 0.35f, 0.65f}, // 6: Hot Pink
-            {0.55f, 0.80f, 0.20f}, // 7: Lime
-            {0.45f, 0.35f, 0.85f}, // 8: Deep Indigo
-            {0.95f, 0.72f, 0.15f}, // 9: Amber Gold
-            {0.20f, 0.70f, 0.60f}, // 10: Teal
-            {0.85f, 0.35f, 0.55f}  // 11: Magenta
-        };
-        int num_palette = sizeof(palette) / sizeof(palette[0]);
-
         double node_radius = 20.0;
 
         // 3. Draw Directed Edges with Arrows
@@ -830,7 +901,8 @@ public:
         for (int u = 0; u < n_nodes; ++u) {
             double x = node_pos[u].x;
             double y = node_pos[u].y;
-            float* col = palette[u % num_palette];
+            float col[3];
+            getDistinctColor(u, col);
 
             // Outer drop-shadow
             glColor4f(0.04f, 0.05f, 0.08f, 0.60f);
