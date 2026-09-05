@@ -199,7 +199,6 @@ int main( int argc, char ** argv)
             updateVccGraph();
         } else {
             decomposeAll();
-            updateAcdGraph(cd);
         }
 
         if(g_outputGraph || g_saveGraph) {
@@ -271,10 +270,10 @@ void decompose()
         ((HybridMeasurement2*)measure)->setTau(g_tau);
     clock_t start=clock();
     cd.decompose(g_tau, measure);
-    int time=clock()-start;
-    cout<<"- Decompose Once Takes "<<((double)(time))/CLOCKS_PER_SEC<<" secs"<<endl;
+    double decomp_time = ((double)(clock()-start))/CLOCKS_PER_SEC;
+    cout<<"- Decompose Once Takes "<<decomp_time<<" secs"<<endl;
     delete measure;
-    updateAcdGraph(cd);
+    updateAcdGraph(cd, decomp_time);
 }
 
 void decomposeAll()
@@ -288,10 +287,10 @@ void decomposeAll()
 
     clock_t start=clock();
     cd.decomposeAll(g_tau,measure);
-    int time=clock()-start;
-    cout<<"- Decompose All Takes "<<((double)(time))/CLOCKS_PER_SEC<<" secs"<<endl;
+    double decomp_time = ((double)(clock()-start))/CLOCKS_PER_SEC;
+    cout<<"- Decompose All Takes "<<decomp_time<<" secs"<<endl;
     delete measure;
-    updateAcdGraph(cd);
+    updateAcdGraph(cd, decomp_time);
 }
 
 void show_normal()

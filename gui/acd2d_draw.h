@@ -43,7 +43,8 @@ extern bool g_showWeights;
 extern acd2d::ConvexGraph g_activeGraph;
 int colorid=-1;
 
-inline void updateAcdGraph(cd_2d& cd2d) {
+inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
+    clock_t g_start = clock();
     std::vector<std::vector<Point2d>> pieces;
     for (const auto& polys : cd2d.getDoneList()) {
         for (const auto& poly : polys) {
@@ -62,6 +63,17 @@ inline void updateAcdGraph(cd_2d& cd2d) {
         g_activeGraph.buildFromPolygons(pieces, "ACD");
     } else {
         g_activeGraph.clear();
+    }
+    double graph_time = (double)(clock() - g_start) / CLOCKS_PER_SEC;
+
+    if (decomp_time_sec >= 0.0) {
+        double total_time = decomp_time_sec + graph_time;
+        std::cout << "=========================================================\n"
+                  << " [ACD & Graph Timing Summary]\n"
+                  << "   - ACD Decomposition Time : " << std::fixed << std::setprecision(4) << decomp_time_sec << " s (" << pieces.size() << " pieces)\n"
+                  << "   - Graph Creation Time    : " << std::fixed << std::setprecision(3) << (graph_time * 1000.0) << " ms (" << std::fixed << std::setprecision(5) << graph_time << " s)\n"
+                  << "   - Total Time             : " << std::fixed << std::setprecision(4) << total_time << " s\n"
+                  << "=========================================================" << std::endl;
     }
 }
 
