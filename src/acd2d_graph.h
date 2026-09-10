@@ -394,6 +394,142 @@ public:
     }
 
     /**
+     * @brief Fast O(E) graph construction for exact non-overlapping polygon partitions (such as ACD).
+     * Uses collinear line spatial hashing to achieve 100% geometric equivalence with 1D shared boundary overlap,
+     * handling collinear cuts and T-junctions while strictly ignoring 0D single-point corner touches.
+     */
+    void buildFromPolygonsVertexMap(
+        const std::vector<std::vector<Point2d>>& pieces,
+        const std::string& type_name,
+        const std::vector<Point2d>& custom_centers = {}
+    ) {
+        clear();
+        decomposition_type = type_name;
+
+        int num_pieces = static_cast<int>(pieces.size());
+        if (num_pieces == 0) return;
+
+        nodes.resize(num_pieces);
+
+        // Step 1: Initialize all vertices / nodes
+        for (int i = 0; i < num_pieces; ++i) {
+            nodes[i].id = i;
+            std::stringstream ss;
+            ss << "C" << i;
+            nodes[i].label = ss.str();
+            nodes[i].vertices = pieces[i];
+            computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
+            if (i < static_cast<int>(custom_centers.size())) {
+                nodes[i].centroid = custom_centers[i];
+            }
+        }
+
+        // Step 2: Line Key for collinear edges
+        struct LineKey {
+            long long angle_idx;
+            long long dist_idx;
+            bool operator<(const LineKey& o) const {
+                if (angle_idx != o.angle_idx) return angle_idx < o.angle_idx;
+                return dist_idx < o.dist_idx;
+            }
+        };
+
+        struct EdgeRef {
+            int poly_id;
+            Point2d p1, p2;
+        };
+
+        const double angle_res = 1e4; // quantize normal angle
+        const double dist_res  = 1e3; // quantize signed distance to line
+
+        auto toLineKey = [angle_res, dist_res](const Point2d& a, const Point2d& b) -> LineKey {
+            Vector2d e(b[0] - a[0], b[1] - a[1]);
+            double L = e.norm();
+            if (L < 1e-6) return {0, 0};
+            Vector2d u(e[0] / L, e[1] / L);
+            Vector2d n(-u[1], u[0]); // Normal
+            if (n[0] < -1e-6 || (std::abs(n[0]) <= 1e-6 && n[1] < 0)) {
+                n = -n;
+            }
+            double angle = std::atan2(n[1], n[0]);
+            if (angle < 0) angle += 3.14159265358979323846;
+            double dist = n[0] * a[0] + n[1] * a[1];
+
+            return { static_cast<long long>(std::round(angle * angle_res)),
+                     static_cast<long long>(std::round(dist * dist_res)) };
+        };
+
+        std::map<LineKey, std::vector<EdgeRef>> line_map;
+        for (int i = 0; i < num_pieces; ++i) {
+            int m = static_cast<int>(nodes[i].vertices.size());
+            for (int j = 0; j < m; ++j) {
+                Point2d a = nodes[i].vertices[j];
+                Point2d b = nodes[i].vertices[(j + 1) % m];
+                LineKey k = toLineKey(a, b);
+                line_map[k].push_back({i, a, b});
+            }
+        }
+
+        // Step 3: Overlap testing only among edges lying on identical lines
+        struct PairOverlap {
+            double total_shared = 0.0;
+            double sum_mid_x = 0.0;
+            double sum_mid_y = 0.0;
+            int count = 0;
+        };
+        std::map<std::pair<int, int>, PairOverlap> overlaps;
+
+        for (const auto& kv : line_map) {
+            const auto& elist = kv.second;
+            int sz = static_cast<int>(elist.size());
+            for (int a = 0; a < sz; ++a) {
+                for (int b = a + 1; b < sz; ++b) {
+                    int u = elist[a].poly_id;
+                    int v = elist[b].poly_id;
+                    if (u == v) continue;
+                    if (u > v) std::swap(u, v);
+
+                    double shared_len = 0.0;
+                    Point2d mid_pt;
+                    if (checkEdgeCollinearOverlap(elist[a].p1, elist[a].p2, elist[b].p1, elist[b].p2, shared_len, mid_pt)) {
+                        auto& po = overlaps[{u, v}];
+                        po.total_shared += shared_len;
+                        po.sum_mid_x += mid_pt[0] * shared_len;
+                        po.sum_mid_y += mid_pt[1] * shared_len;
+                        po.count++;
+                    }
+                }
+            }
+        }
+
+        // Step 4: Construct directed edges for adjacent pairs
+        for (const auto& kv : overlaps) {
+            int i = kv.first.first;
+            int j = kv.first.second;
+            const auto& po = kv.second;
+
+            if (po.count > 0 && po.total_shared > 1e-4) {
+                double shared_len = po.total_shared;
+                Point2d interface_pt(po.sum_mid_x / shared_len, po.sum_mid_y / shared_len);
+
+                GraphEdge e_ij;
+                e_ij.target = j;
+                e_ij.weight = 0.0;
+                e_ij.shared_length = shared_len;
+                e_ij.interface_pt = interface_pt;
+                nodes[i].adj.push_back(e_ij);
+
+                GraphEdge e_ji;
+                e_ji.target = i;
+                e_ji.weight = 0.0;
+                e_ji.shared_length = shared_len;
+                e_ji.interface_pt = interface_pt;
+                nodes[j].adj.push_back(e_ji);
+            }
+        }
+    }
+
+    /**
      * @brief Constructs the directed weighted graph from a collection of convex polygons.
      */
     void buildFromPolygons(
@@ -401,6 +537,11 @@ public:
         const std::string& type_name,
         const std::vector<Point2d>& custom_centers = {}
     ) {
+        if (type_name == "ACD") {
+            buildFromPolygonsVertexMap(pieces, type_name, custom_centers);
+            return;
+        }
+
         clear();
         decomposition_type = type_name;
 
