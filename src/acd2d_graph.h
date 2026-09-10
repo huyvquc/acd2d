@@ -369,27 +369,60 @@ public:
             return true;
         }
 
-        // 2. Check for true 2D area overlap (for overlapping covers like IRIS)
-        std::vector<Point2d> ccw1 = p1;
-        std::vector<Point2d> ccw2 = p2;
-        ensureCCW(ccw1);
-        ensureCCW(ccw2);
-
-        std::vector<Point2d> intersectionPoly = clipConvexPolygon(ccw1, ccw2);
-        if (intersectionPoly.size() >= 3) {
-            Point2d inter_centroid;
-            double inter_area = 0.0;
-            computePolygonCentroidAndArea(intersectionPoly, inter_centroid, inter_area);
-
-            double min_area = std::min(n1.area, n2.area);
-            if (inter_area > 1e-4 && (min_area <= 1e-7 || inter_area > 0.005 * min_area)) {
-                shared_len = inter_area;
-                interface_pt = inter_centroid;
-                return true;
+        // 2. Check for single point / vertex contact (0D point sharing: vertex-vertex or vertex-edge)
+        // Vertex-Vertex check
+        for (int i = 0; i < m1; ++i) {
+            for (int j = 0; j < m2; ++j) {
+                if ((p1[i] - p2[j]).norm() < 1e-3) {
+                    shared_len = 0.0;
+                    interface_pt = p1[i];
+                    return true;
+                }
             }
         }
 
-        // Single isolated vertex contact (0D point) is NOT adjacency
+        // Vertex-Edge check: p1 vertex on p2 edge
+        for (int i = 0; i < m1; ++i) {
+            const Point2d& pt = p1[i];
+            for (int j = 0; j < m2; ++j) {
+                const Point2d& a = p2[j];
+                const Point2d& b = p2[(j + 1) % m2];
+                Vector2d e(b[0] - a[0], b[1] - a[1]);
+                double L = e.norm();
+                if (L < 1e-6) continue;
+                Vector2d u(e[0] / L, e[1] / L);
+                Vector2d n(-u[1], u[0]);
+                double perp_dist = std::abs((pt[0] - a[0]) * n[0] + (pt[1] - a[1]) * n[1]);
+                double proj = (pt[0] - a[0]) * u[0] + (pt[1] - a[1]) * u[1];
+                if (perp_dist < 1e-3 && proj >= -1e-4 && proj <= L + 1e-4) {
+                    shared_len = 0.0;
+                    interface_pt = pt;
+                    return true;
+                }
+            }
+        }
+
+        // Vertex-Edge check: p2 vertex on p1 edge
+        for (int j = 0; j < m2; ++j) {
+            const Point2d& pt = p2[j];
+            for (int i = 0; i < m1; ++i) {
+                const Point2d& a = p1[i];
+                const Point2d& b = p1[(i + 1) % m1];
+                Vector2d e(b[0] - a[0], b[1] - a[1]);
+                double L = e.norm();
+                if (L < 1e-6) continue;
+                Vector2d u(e[0] / L, e[1] / L);
+                Vector2d n(-u[1], u[0]);
+                double perp_dist = std::abs((pt[0] - a[0]) * n[0] + (pt[1] - a[1]) * n[1]);
+                double proj = (pt[0] - a[0]) * u[0] + (pt[1] - a[1]) * u[1];
+                if (perp_dist < 1e-3 && proj >= -1e-4 && proj <= L + 1e-4) {
+                    shared_len = 0.0;
+                    interface_pt = pt;
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
