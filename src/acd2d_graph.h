@@ -121,6 +121,31 @@ struct GraphEdge {
     Point2d interface_pt;       // Contact interface midpoint
 };
 
+struct AABB2D {
+    double min_x = 1e30, max_x = -1e30;
+    double min_y = 1e30, max_y = -1e30;
+
+    void update(const Point2d& pt) {
+        if (pt[0] < min_x) min_x = pt[0];
+        if (pt[0] > max_x) max_x = pt[0];
+        if (pt[1] < min_y) min_y = pt[1];
+        if (pt[1] > max_y) max_y = pt[1];
+    }
+
+    void computeFrom(const std::vector<Point2d>& pts) {
+        min_x = 1e30; max_x = -1e30;
+        min_y = 1e30; max_y = -1e30;
+        for (const auto& pt : pts) {
+            update(pt);
+        }
+    }
+
+    inline bool intersects(const AABB2D& o, double tol = 1e-3) const {
+        return !(max_x + tol < o.min_x || min_x - tol > o.max_x ||
+                 max_y + tol < o.min_y || min_y - tol > o.max_y);
+    }
+};
+
 /**
  * @brief Node in the convex decomposition graph representing one convex piece.
  */
@@ -130,6 +155,7 @@ struct GraphNode {
     Point2d centroid;           // Centroid / center of mass (Cx, Cy)
     double area;                // Geometric area of the convex polygon
     std::vector<Point2d> vertices; // Boundary vertices of the convex polygon
+    AABB2D box;                 // Axis-aligned bounding box
     std::vector<GraphEdge> adj; // Outgoing directed edges
 };
 
@@ -347,10 +373,20 @@ public:
         for (int i = 0; i < m1; ++i) {
             const Point2d& a1 = p1[i];
             const Point2d& b1 = p1[(i + 1) % m1];
+            double e1_min_x = std::min(a1[0], b1[0]) - 1e-3;
+            double e1_max_x = std::max(a1[0], b1[0]) + 1e-3;
+            double e1_min_y = std::min(a1[1], b1[1]) - 1e-3;
+            double e1_max_y = std::max(a1[1], b1[1]) + 1e-3;
 
             for (int j = 0; j < m2; ++j) {
                 const Point2d& a2 = p2[j];
                 const Point2d& b2 = p2[(j + 1) % m2];
+
+                // Fast segment AABB rejection
+                if (e1_max_x < std::min(a2[0], b2[0]) || e1_min_x > std::max(a2[0], b2[0]) ||
+                    e1_max_y < std::min(a2[1], b2[1]) || e1_min_y > std::max(a2[1], b2[1])) {
+                    continue;
+                }
 
                 double seg_len = 0.0;
                 Point2d seg_mid;
@@ -373,10 +409,12 @@ public:
         // Vertex-Vertex check
         for (int i = 0; i < m1; ++i) {
             for (int j = 0; j < m2; ++j) {
-                if ((p1[i] - p2[j]).norm() < 1e-3) {
-                    shared_len = 0.0;
-                    interface_pt = p1[i];
-                    return true;
+                if (std::abs(p1[i][0] - p2[j][0]) < 1e-3 && std::abs(p1[i][1] - p2[j][1]) < 1e-3) {
+                    if ((p1[i] - p2[j]).norm() < 1e-3) {
+                        shared_len = 0.0;
+                        interface_pt = p1[i];
+                        return true;
+                    }
                 }
             }
         }
@@ -387,6 +425,13 @@ public:
             for (int j = 0; j < m2; ++j) {
                 const Point2d& a = p2[j];
                 const Point2d& b = p2[(j + 1) % m2];
+
+                // Point vs Segment AABB check
+                if (pt[0] < std::min(a[0], b[0]) - 1e-3 || pt[0] > std::max(a[0], b[0]) + 1e-3 ||
+                    pt[1] < std::min(a[1], b[1]) - 1e-3 || pt[1] > std::max(a[1], b[1]) + 1e-3) {
+                    continue;
+                }
+
                 Vector2d e(b[0] - a[0], b[1] - a[1]);
                 double L = e.norm();
                 if (L < 1e-6) continue;
@@ -408,6 +453,13 @@ public:
             for (int i = 0; i < m1; ++i) {
                 const Point2d& a = p1[i];
                 const Point2d& b = p1[(i + 1) % m1];
+
+                // Point vs Segment AABB check
+                if (pt[0] < std::min(a[0], b[0]) - 1e-3 || pt[0] > std::max(a[0], b[0]) + 1e-3 ||
+                    pt[1] < std::min(a[1], b[1]) - 1e-3 || pt[1] > std::max(a[1], b[1]) + 1e-3) {
+                    continue;
+                }
+
                 Vector2d e(b[0] - a[0], b[1] - a[1]);
                 double L = e.norm();
                 if (L < 1e-6) continue;
@@ -442,22 +494,28 @@ public:
 
         nodes.resize(num_pieces);
 
-        // Step 1: Initialize all vertices / nodes
+        // Step 1: Initialize all vertices / nodes and compute their 2D AABB
         for (int i = 0; i < num_pieces; ++i) {
             nodes[i].id = i;
             std::stringstream ss;
             ss << "C" << i;
             nodes[i].label = ss.str();
             nodes[i].vertices = pieces[i];
+            nodes[i].box.computeFrom(pieces[i]);
             computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
             if (i < static_cast<int>(custom_centers.size())) {
                 nodes[i].centroid = custom_centers[i];
             }
         }
 
-        // Step 2: Determine adjacency and construct directed edges (weight = 0.0)
+        // Step 2: Determine adjacency using fast AABB pruning and construct directed edges (weight = 0.0)
         for (int i = 0; i < num_pieces; ++i) {
             for (int j = i + 1; j < num_pieces; ++j) {
+                // Fast AABB rejection: 4 scalar comparisons skip non-overlapping bounding boxes in O(1)
+                if (!nodes[i].box.intersects(nodes[j].box)) {
+                    continue;
+                }
+
                 double shared_len = 0.0;
                 Point2d if_pt;
                 if (arePolygonsAdjacent(nodes[i], nodes[j], shared_len, if_pt)) {

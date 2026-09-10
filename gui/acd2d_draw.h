@@ -70,7 +70,7 @@ inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
         double total_time = decomp_time_sec + graph_time;
         std::cout << "=========================================================\n"
                   << " [ACD & Graph Timing Summary]\n"
-                  << "   - ACD Decomposition Time : " << std::fixed << std::setprecision(4) << decomp_time_sec << " s (" << pieces.size() << " pieces)\n"
+                  << "   - ACD Decomposition Time : " << std::fixed << std::setprecision(4) << decomp_time_sec << " s (" << g_activeGraph.nodes.size() << " pieces)\n"
                   << "   - Graph Creation Time    : " << std::fixed << std::setprecision(3) << (graph_time * 1000.0) << " ms (" << std::fixed << std::setprecision(5) << graph_time << " s)\n"
                   << "   - Total Time             : " << std::fixed << std::setprecision(4) << total_time << " s\n"
                   << "=========================================================\n" << std::flush;
