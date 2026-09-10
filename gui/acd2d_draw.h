@@ -45,25 +45,7 @@ int colorid=-1;
 
 inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
     clock_t g_start = clock();
-    std::vector<std::vector<Point2d>> pieces;
-    for (const auto& polys : cd2d.getDoneList()) {
-        for (const auto& poly : polys) {
-            std::vector<Point2d> piece;
-            cd_vertex* ptr = poly.getHead();
-            if (ptr != NULL) {
-                do {
-                    piece.push_back(ptr->getPos());
-                    ptr = ptr->getNext();
-                } while (ptr != poly.getHead());
-            }
-            if (piece.size() >= 3) pieces.push_back(piece);
-        }
-    }
-    if (!pieces.empty()) {
-        g_activeGraph.buildFromPolygons(pieces, "ACD");
-    } else {
-        g_activeGraph.clear();
-    }
+    cd2d.exportToConvexGraph(g_activeGraph);
     double graph_time = (double)(clock() - g_start) / CLOCKS_PER_SEC;
 
     if (decomp_time_sec >= 0.0) {

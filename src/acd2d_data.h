@@ -220,7 +220,8 @@ namespace acd2d
 	class cd_polygon : public list<cd_poly>{
 	
 	public: 
-		cd_polygon(){}
+		int id;
+		cd_polygon() : id(-1) {}
 		void buildDependency();
 		cd_poly next(); //get the next polychain to be resolved
 		cd_poly& outmost();

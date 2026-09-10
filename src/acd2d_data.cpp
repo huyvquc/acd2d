@@ -605,6 +605,7 @@ namespace acd2d
 	{
 		//destroy myself
 		destroy();
+		id = other.id;
 	
 		for(const_iterator i=other.begin();i!=other.end();i++){
 			cd_poly p(cd_poly::UNKNOWN);

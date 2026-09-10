@@ -7,6 +7,8 @@
 #define _CD2D_H_
 
 #include <list>
+#include <map>
+#include <vector>
 using namespace std;
 
 #include "acd2d_data.h"
@@ -18,6 +20,19 @@ namespace acd2d
 	typedef cd_polygon::const_iterator PLYCIT;
 	
 	class IConcavityMeasure; //the interface for concavity measurement
+	class ConvexGraph;       //forward declaration for graph export
+
+	struct IncrementalEdge {
+		int target;            // Neighbor polygon ID
+		double shared_length;  // Length of shared 1D boundary (0.0 for 0D point contact)
+		Point2d interface_pt;  // Contact interface midpoint or contact point
+	};
+
+	struct IncrementalNode {
+		int id;
+		std::vector<Point2d> vertices;
+		std::map<int, IncrementalEdge> adj; // target_id -> edge
+	};
 	
 	class cd_2d
 	{
@@ -46,17 +61,27 @@ namespace acd2d
 		const list<cd_polygon>& getDoneList() const { return done_list; }
 		const list<cd_diagonal>& getDiagonal() const { return dia_list; }
 		void updateCutDirParameters( double a, double b ){ alpha=a; beta=b;  }
-	
+		const std::map<int, IncrementalNode>& getIncrementalGraph() const { return m_incremental_graph; }
+
 		///////////////////////////////////////////////////////////////////////////
-		//other functions
+		//graph export
+		void exportToConvexGraph(ConvexGraph& out_graph) const;
 	
-		
 	protected:
 	
 		void decompose(double d, cd_polygon& polys );
 		void decompose_OUT(double d, cd_polygon& polys, cd_poly& poly);
 		void decompose_IN(double d, cd_polygon& polys, cd_poly& poly);
+		void updateCutAdjacency(int parent_id, int child1_id, const cd_polygon& p1, int child2_id, const cd_polygon& p2, const cd_diagonal& dia);
 	
+		static std::vector<Point2d> extractPolygonVertices(const cd_polygon& poly);
+		static bool checkPolygonOverlap(
+			const std::vector<Point2d>& p1,
+			const std::vector<Point2d>& p2,
+			double& shared_len,
+			Point2d& interface_pt
+		);
+
 	private:
 	
 		list<cd_polygon> todo_list;
@@ -69,6 +94,10 @@ namespace acd2d
 		//cut lines
 		list<cd_diagonal> dia_list;
 		bool store_diagoanls;    //if set, all cut lines will be stored
+
+		//incremental dual graph
+		std::map<int, IncrementalNode> m_incremental_graph;
+		int m_next_poly_id;
 	};
 
 }
