@@ -427,9 +427,12 @@ public:
     }
 
     /**
-     * @brief Constructs the directed weighted graph from a collection of convex polygons.
+     * @brief Constructs the dual graph using Pure Vertex & Edge Hashing (Approach 2).
+     * Maps each unique quantized vertex to the list of polygons containing it (either as a corner
+     * or along an edge via T-junctions). Graph edges, shared lengths, and interface points
+     * are computed directly from the inverted vertex map without calling arePolygonsAdjacent.
      */
-    void buildFromPolygons(
+    void buildFromPolygonsVertexHashing(
         const std::vector<std::vector<Point2d>>& pieces,
         const std::string& type_name,
         const std::vector<Point2d>& custom_centers = {}
@@ -442,7 +445,34 @@ public:
 
         nodes.resize(num_pieces);
 
-        // Step 1: Initialize all vertices / nodes
+        // Step 1 & 2A: Spatial Vertex Key Definition
+        struct VertexKey {
+            long long x_idx;
+            long long y_idx;
+            bool operator<(const VertexKey& o) const {
+                if (x_idx != o.x_idx) return x_idx < o.x_idx;
+                return y_idx < o.y_idx;
+            }
+            bool operator==(const VertexKey& o) const {
+                return x_idx == o.x_idx && y_idx == o.y_idx;
+            }
+        };
+
+        const double scale = 1e3; // 1mm resolution
+        auto toKey = [scale](const Point2d& pt) -> VertexKey {
+            return {
+                static_cast<long long>(std::round(pt[0] * scale)),
+                static_cast<long long>(std::round(pt[1] * scale))
+            };
+        };
+
+        struct VertexEntry {
+            Point2d pt;
+            std::vector<int> polys;
+        };
+        std::map<VertexKey, VertexEntry> vert_map;
+
+        // Step 1 & 2A: Initialize nodes & register corner vertices in a single loop
         for (int i = 0; i < num_pieces; ++i) {
             nodes[i].id = i;
             std::stringstream ss;
@@ -453,32 +483,131 @@ public:
             if (i < static_cast<int>(custom_centers.size())) {
                 nodes[i].centroid = custom_centers[i];
             }
-        }
 
-        // Step 2: Determine adjacency and construct directed edges (weight = 0.0)
-        for (int i = 0; i < num_pieces; ++i) {
-            for (int j = i + 1; j < num_pieces; ++j) {
-                double shared_len = 0.0;
-                Point2d if_pt;
-                if (arePolygonsAdjacent(nodes[i], nodes[j], shared_len, if_pt)) {
-                    // Directed edge i -> j
-                    GraphEdge e_ij;
-                    e_ij.target = j;
-                    e_ij.weight = 0.0; // Fixed to 0.0 
-                    e_ij.shared_length = shared_len;
-                    e_ij.interface_pt = if_pt;
-                    nodes[i].adj.push_back(e_ij);
-
-                    // Directed edge j -> i
-                    GraphEdge e_ji;
-                    e_ji.target = i;
-                    e_ji.weight = 0.0; // Fixed to 0.0 
-                    e_ji.shared_length = shared_len;
-                    e_ji.interface_pt = if_pt;
-                    nodes[j].adj.push_back(e_ji);
+            // Register corner vertices
+            for (const auto& pt : pieces[i]) {
+                VertexKey k = toKey(pt);
+                auto& entry = vert_map[k];
+                entry.pt = pt;
+                if (std::find(entry.polys.begin(), entry.polys.end(), i) == entry.polys.end()) {
+                    entry.polys.push_back(i);
                 }
             }
         }
+
+        // Step 2B: Register edges with intermediate/T-junction vertices
+        const double tol = 1e-3;
+        for (int i = 0; i < num_pieces; ++i) {
+            const auto& poly = nodes[i].vertices;
+            int m = static_cast<int>(poly.size());
+            for (int e_idx = 0; e_idx < m; ++e_idx) {
+                const Point2d& a = poly[e_idx];
+                const Point2d& b = poly[(e_idx + 1) % m];
+                Vector2d e(b[0] - a[0], b[1] - a[1]);
+                double L = e.norm();
+                if (L < 1e-6) continue;
+                Vector2d u(e[0] / L, e[1] / L);
+                Vector2d n(-u[1], u[0]);
+
+                double min_x = std::min(a[0], b[0]) - tol;
+                double max_x = std::max(a[0], b[0]) + tol;
+                double min_y = std::min(a[1], b[1]) - tol;
+                double max_y = std::max(a[1], b[1]) + tol;
+
+                for (auto& kv : vert_map) {
+                    const Point2d& pt = kv.second.pt;
+                    if (pt[0] < min_x || pt[0] > max_x || pt[1] < min_y || pt[1] > max_y) continue;
+                    auto& plist = kv.second.polys;
+                    if (std::find(plist.begin(), plist.end(), i) != plist.end()) continue;
+
+                    double dx = pt[0] - a[0];
+                    double dy = pt[1] - a[1];
+                    double perp_dist = std::abs(dx * n[0] + dy * n[1]);
+                    double proj = dx * u[0] + dy * u[1];
+
+                    if (perp_dist < tol && proj >= -1e-4 && proj <= L + 1e-4) {
+                        plist.push_back(i);
+                    }
+                }
+            }
+        }
+
+        // Step 3: Invert the vertex map to get all shared contact points per polygon pair
+        std::map<std::pair<int, int>, std::vector<Point2d>> pair_shared_pts;
+        for (const auto& kv : vert_map) {
+            const auto& plist = kv.second.polys;
+            int sz = static_cast<int>(plist.size());
+            const Point2d& pt = kv.second.pt;
+            for (int a = 0; a < sz; ++a) {
+                for (int b = a + 1; b < sz; ++b) {
+                    int u = std::min(plist[a], plist[b]);
+                    int v = std::max(plist[a], plist[b]);
+                    pair_shared_pts[{u, v}].push_back(pt);
+                }
+            }
+        }
+
+        // Step 4: Construct dual graph directed edges directly from shared vertices
+        for (const auto& kv : pair_shared_pts) {
+            int u = kv.first.first;
+            int v = kv.first.second;
+            const auto& pts = kv.second;
+
+            double shared_len = 0.0;
+            Point2d if_pt(0, 0);
+
+            if (pts.size() >= 2) {
+                // Find furthest pair of shared points along the contact boundary
+                double max_d = 0.0;
+                Point2d best_mid((pts[0][0] + pts[1][0]) * 0.5, (pts[0][1] + pts[1][1]) * 0.5);
+                for (size_t i = 0; i < pts.size(); ++i) {
+                    for (size_t j = i + 1; j < pts.size(); ++j) {
+                        double d = (pts[i] - pts[j]).norm();
+                        if (d > max_d) {
+                            max_d = d;
+                            best_mid = Point2d((pts[i][0] + pts[j][0]) * 0.5, (pts[i][1] + pts[j][1]) * 0.5);
+                        }
+                    }
+                }
+                if (max_d > 1e-4) {
+                    shared_len = max_d;
+                    if_pt = best_mid;
+                } else {
+                    shared_len = 0.0;
+                    if_pt = pts[0];
+                }
+            } else if (pts.size() == 1) {
+                shared_len = 0.0;
+                if_pt = pts[0];
+            }
+
+            // Directed edge u -> v
+            GraphEdge e_uv;
+            e_uv.target = v;
+            e_uv.weight = 0.0;
+            e_uv.shared_length = shared_len;
+            e_uv.interface_pt = if_pt;
+            nodes[u].adj.push_back(e_uv);
+
+            // Directed edge v -> u
+            GraphEdge e_vu;
+            e_vu.target = u;
+            e_vu.weight = 0.0;
+            e_vu.shared_length = shared_len;
+            e_vu.interface_pt = if_pt;
+            nodes[v].adj.push_back(e_vu);
+        }
+    }
+
+    /**
+     * @brief Constructs the directed weighted graph from a collection of convex polygons.
+     */
+    void buildFromPolygons(
+        const std::vector<std::vector<Point2d>>& pieces,
+        const std::string& type_name,
+        const std::vector<Point2d>& custom_centers = {}
+    ) {
+        buildFromPolygonsVertexHashing(pieces, type_name, custom_centers);
     }
 
     /**
