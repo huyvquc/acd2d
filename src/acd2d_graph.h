@@ -153,7 +153,11 @@ struct GraphNode {
     int id;                     // Unique node index (0, 1, 2, ...)
     std::string label;          // Label string, e.g., "C0", "C1", ...
     Point2d centroid;           // Centroid / center of mass (Cx, Cy)
-    double area;                // Geometric area of the convex polygon
+    double area = 0.0;          // Geometric area of the convex polygon
+    double perimeter = 0.0;     // Boundary perimeter length
+    double diameter = 0.0;      // Maximum Euclidean distance between any pair of vertices
+    double compactness = 0.0;   // Perimeter^2 / (4 * pi * Area)
+    double connectivity = 0.0;  // Sum of interface lengths / Perimeter
     std::vector<Point2d> vertices; // Boundary vertices of the convex polygon
     AABB2D box;                 // Axis-aligned bounding box
     std::vector<GraphEdge> adj; // Outgoing directed edges
@@ -183,7 +187,7 @@ public:
     }
 
     /**
-     * @brief Computes centroid and unsigned area of a 2D polygon.
+     * @brief Computes centroid and unsigned area of a 2D polygon using the Shoelace formula.
      */
     static void computePolygonCentroidAndArea(
         const std::vector<Point2d>& pts,
@@ -226,6 +230,50 @@ public:
             }
             centroid = Point2d(sum_x / n, sum_y / n);
         }
+    }
+
+    /**
+     * @brief Computes boundary perimeter and diameter (max distance between any two vertices) of a 2D polygon.
+     */
+    static void computePolygonPerimeterAndDiameter(
+        const std::vector<Point2d>& pts,
+        double& perimeter,
+        double& diameter
+    ) {
+        int m = static_cast<int>(pts.size());
+        perimeter = 0.0;
+        diameter = 0.0;
+        if (m < 2) return;
+
+        // Perimeter: sum of edge lengths
+        for (int i = 0; i < m; ++i) {
+            const Point2d& a = pts[i];
+            const Point2d& b = pts[(i + 1) % m];
+            perimeter += (b - a).norm();
+        }
+
+        // Diameter: maximum Euclidean distance between any pair of vertices
+        double max_dist_sq = 0.0;
+        for (int i = 0; i < m; ++i) {
+            for (int j = i + 1; j < m; ++j) {
+                double dx = pts[i][0] - pts[j][0];
+                double dy = pts[i][1] - pts[j][1];
+                double dist_sq = dx * dx + dy * dy;
+                if (dist_sq > max_dist_sq) {
+                    max_dist_sq = dist_sq;
+                }
+            }
+        }
+        diameter = std::sqrt(max_dist_sq);
+    }
+
+    /**
+     * @brief Computes compactness (isoperimetric quotient) of a 2D polygon:
+     * Compactness = Perimeter^2 / (4 * pi * Area).
+     */
+    static double computePolygonCompactness(double perimeter, double area) {
+        if (area <= 1e-12) return 0.0;
+        return (perimeter * perimeter) / (4.0 * 3.14159265358979323846 * area);
     }
 
     /**
@@ -494,7 +542,7 @@ public:
 
         nodes.resize(num_pieces);
 
-        // Step 1: Initialize all vertices / nodes and compute their 2D AABB
+        // Step 1: Initialize all vertices / nodes, AABB, area, perimeter, diameter, compactness
         for (int i = 0; i < num_pieces; ++i) {
             nodes[i].id = i;
             std::stringstream ss;
@@ -503,6 +551,8 @@ public:
             nodes[i].vertices = pieces[i];
             nodes[i].box.computeFrom(pieces[i]);
             computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
+            computePolygonPerimeterAndDiameter(pieces[i], nodes[i].perimeter, nodes[i].diameter);
+            nodes[i].compactness = computePolygonCompactness(nodes[i].perimeter, nodes[i].area);
             if (i < static_cast<int>(custom_centers.size())) {
                 nodes[i].centroid = custom_centers[i];
             }
@@ -537,6 +587,15 @@ public:
                 }
             }
         }
+
+        // Step 3: Compute connectivity for each polygon (sum of interfaces length / perimeter)
+        for (int i = 0; i < num_pieces; ++i) {
+            double total_interface_len = 0.0;
+            for (const auto& e : nodes[i].adj) {
+                total_interface_len += e.shared_length;
+            }
+            nodes[i].connectivity = (nodes[i].perimeter > 1e-12) ? (total_interface_len / nodes[i].perimeter) : 0.0;
+        }
     }
 
     /**
@@ -564,7 +623,11 @@ public:
             os << " Vertex " << std::left << std::setw(4) << n.label 
                << " (id=" << n.id << "): Centroid=(" 
                << std::fixed << std::setprecision(2) << n.centroid[0] << ", " 
-               << n.centroid[1] << "), Area=" << n.area 
+               << n.centroid[1] << "), Area=" << std::setprecision(4) << n.area
+               << ", Perim=" << std::setprecision(4) << n.perimeter
+               << ", Diam=" << std::setprecision(4) << n.diameter
+               << ", Compact=" << std::setprecision(4) << n.compactness
+               << ", Connect=" << std::setprecision(4) << n.connectivity
                << ", Vertices=" << n.vertices.size() << "\n";
 
             if (n.adj.empty()) {
@@ -606,6 +669,10 @@ public:
             fout << "      \"centroid\": [" << std::fixed << std::setprecision(4) 
                  << n.centroid[0] << ", " << n.centroid[1] << "],\n";
             fout << "      \"area\": " << n.area << ",\n";
+            fout << "      \"perimeter\": " << n.perimeter << ",\n";
+            fout << "      \"diameter\": " << n.diameter << ",\n";
+            fout << "      \"compactness\": " << n.compactness << ",\n";
+            fout << "      \"connectivity\": " << n.connectivity << ",\n";
             fout << "      \"polygon\": [";
             for (size_t v = 0; v < n.vertices.size(); ++v) {
                 fout << "[" << n.vertices[v][0] << ", " << n.vertices[v][1] << "]";
