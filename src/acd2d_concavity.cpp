@@ -28,8 +28,9 @@ namespace acd2d
 			if( norm!=0) c=findDist(n,v1->getPos(),ptr->getPos());
 			else c=(v1->getPos()-ptr->getPos()).norm();
 			ptr->setConcavity(c);
-			if( r==NULL ) r=ptr;
-			else if( r->getConcavity()<c ){ r=ptr; }
+			if( ptr->isReflex() ){
+				if( r==NULL || r->getConcavity()<c ){ r=ptr; }
+			}
 			ptr=ptr->getNext();
 		}while( ptr!=v2 );
 		v1->setConcavity(0);
@@ -52,7 +53,7 @@ namespace acd2d
 		cd_vertex * max_v=NULL;
 		double max_c=-1e20;
 		do{
-			if( max_c < ptr->getConcavity() ){
+			if( ptr->isReflex() && max_c < ptr->getConcavity() ){
 				max_c=ptr->getConcavity();
 				max_v=ptr;
 			}

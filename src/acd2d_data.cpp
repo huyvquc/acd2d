@@ -30,13 +30,15 @@ namespace acd2d
 		normal=acd2d::computeNormal(next->pos-pos);
 	}
 	
-	Point2d cd_vertex::computeClosePt(const Point2d& pos)
+	Point2d cd_vertex::computeClosePt(const Point2d& p)
 	{
-		Vector2d vec=(next->pos-pos);
-		double t= ((pos-this->pos)*vec)/(vec*vec);
-		if( t<0 ) t=0;
-		else if(t>1) t=1;
-		return this->pos+t*vec;
+		Vector2d vec = (next->pos - this->pos);
+		double len_sqr = vec * vec;
+		if (len_sqr < 1e-12) return this->pos;
+		double t = ((p - this->pos) * vec) / len_sqr;
+		if (t < 0) t = 0;
+		else if (t > 1) t = 1;
+		return this->pos + t * vec;
 	}
 	
 	double cd_vertex::computeDist(const Point2d& pos)
@@ -254,7 +256,7 @@ namespace acd2d
 		for( BIT ib=bridges.begin();ib!=bridges.end(); ib++ ){
 			cd_bridge * b=*ib;
 			if( b->max_r==NULL ) b->FindMaxR(measure); //find max_r
-			if( b->max_r==NULL ) continue; //?? wierd, still null...:-<
+			if( b->max_r==NULL || !b->max_r->isReflex() ) continue; //?? wierd, still null...:-<
 			if( r==NULL ) r=b->max_r;
 			else if(r->getConcavity()<b->max_r->getConcavity())
 				r=b->max_r;

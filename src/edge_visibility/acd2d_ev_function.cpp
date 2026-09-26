@@ -99,6 +99,7 @@ namespace acd2d
 	// deallocate all triangles
 	void free_triangle( ev_triangle * t, ev_triangle * p )
 	{
+		if( t == NULL ) return;
 		for( int i=0;i<3;i++ ){
 			if( t->t[i]==NULL || t->t[i]==p ) continue;
 			free_triangle(t->t[i],t);
@@ -108,6 +109,7 @@ namespace acd2d
 	
 	void free_triangle( ev_triangle * t )
 	{
+		if( t == NULL ) return;
 		free_triangle(t,NULL);
 	}
 	
