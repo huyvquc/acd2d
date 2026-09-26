@@ -158,6 +158,7 @@ struct GraphNode {
     double diameter = 0.0;      // Maximum Euclidean distance between any pair of vertices
     double compactness = 0.0;   // Perimeter^2 / (4 * pi * Area)
     double connectivity = 0.0;  // Sum of interface lengths / Perimeter
+    double aspect_ratio = 1.0;  // Max eigenvalue / Min eigenvalue of area covariance matrix
     std::vector<Point2d> vertices; // Boundary vertices of the convex polygon
     AABB2D box;                 // Axis-aligned bounding box
     std::vector<GraphEdge> adj; // Outgoing directed edges
@@ -274,6 +275,57 @@ public:
     static double computePolygonCompactness(double perimeter, double area) {
         if (area <= 1e-12) return 0.0;
         return (perimeter * perimeter) / (4.0 * 3.14159265358979323846 * area);
+    }
+
+    /**
+     * @brief Computes the area covariance matrix and aspect ratio of a 2D polygon:
+     * Aspect Ratio = lambda_max / lambda_min (where lambda_max, lambda_min are eigenvalues of area covariance).
+     */
+    static double computePolygonAspectRatio(
+        const std::vector<Point2d>& pts,
+        const Point2d& centroid,
+        double area
+    ) {
+        int n = static_cast<int>(pts.size());
+        if (n < 3 || area <= 1e-12) return 1.0;
+
+        double mu_xx = 0.0;
+        double mu_yy = 0.0;
+        double mu_xy = 0.0;
+
+        for (int i = 0; i < n; ++i) {
+            double x1 = pts[i][0] - centroid[0];
+            double y1 = pts[i][1] - centroid[1];
+            double x2 = pts[(i + 1) % n][0] - centroid[0];
+            double y2 = pts[(i + 1) % n][1] - centroid[1];
+
+            double cross = x1 * y2 - x2 * y1;
+            mu_xx += (x1 * x1 + x1 * x2 + x2 * x2) * cross;
+            mu_yy += (y1 * y1 + y1 * y2 + y2 * y2) * cross;
+            mu_xy += (2.0 * x1 * y1 + x1 * y2 + x2 * y1 + 2.0 * x2 * y2) * cross;
+        }
+
+        if (mu_xx < 0.0 || (mu_xx == 0.0 && mu_yy < 0.0)) {
+            mu_xx = -mu_xx;
+            mu_yy = -mu_yy;
+            mu_xy = -mu_xy;
+        }
+
+        double sig_xx = mu_xx / (12.0 * area);
+        double sig_yy = mu_yy / (12.0 * area);
+        double sig_xy = mu_xy / (24.0 * area);
+
+        double trace = sig_xx + sig_yy;
+        double diff = sig_xx - sig_yy;
+        double disc = std::sqrt(std::max(0.0, diff * diff + 4.0 * sig_xy * sig_xy));
+
+        double lam_max = (trace + disc) * 0.5;
+        double lam_min = (trace - disc) * 0.5;
+
+        if (lam_min <= 1e-12) {
+            return (lam_max > 1e-12) ? 1e6 : 1.0;
+        }
+        return lam_max / lam_min;
     }
 
     /**
@@ -542,7 +594,7 @@ public:
 
         nodes.resize(num_pieces);
 
-        // Step 1: Initialize all vertices / nodes, AABB, area, perimeter, diameter, compactness
+        // Step 1: Initialize all vertices / nodes, AABB, area, perimeter, diameter, compactness, aspect_ratio
         for (int i = 0; i < num_pieces; ++i) {
             nodes[i].id = i;
             std::stringstream ss;
@@ -553,6 +605,7 @@ public:
             computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
             computePolygonPerimeterAndDiameter(pieces[i], nodes[i].perimeter, nodes[i].diameter);
             nodes[i].compactness = computePolygonCompactness(nodes[i].perimeter, nodes[i].area);
+            nodes[i].aspect_ratio = computePolygonAspectRatio(pieces[i], nodes[i].centroid, nodes[i].area);
             if (i < static_cast<int>(custom_centers.size())) {
                 nodes[i].centroid = custom_centers[i];
             }
@@ -628,6 +681,7 @@ public:
                << ", Diam=" << std::setprecision(4) << n.diameter
                << ", Compact=" << std::setprecision(4) << n.compactness
                << ", Connect=" << std::setprecision(4) << n.connectivity
+               << ", AR=" << std::setprecision(4) << n.aspect_ratio
                << ", Vertices=" << n.vertices.size() << "\n";
 
             if (n.adj.empty()) {
@@ -673,6 +727,7 @@ public:
             fout << "      \"diameter\": " << n.diameter << ",\n";
             fout << "      \"compactness\": " << n.compactness << ",\n";
             fout << "      \"connectivity\": " << n.connectivity << ",\n";
+            fout << "      \"aspect_ratio\": " << n.aspect_ratio << ",\n";
             fout << "      \"polygon\": [";
             for (size_t v = 0; v < n.vertices.size(); ++v) {
                 fout << "[" << n.vertices[v][0] << ", " << n.vertices[v][1] << "]";
