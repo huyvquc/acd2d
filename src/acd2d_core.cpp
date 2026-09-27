@@ -107,7 +107,9 @@ namespace acd2d
 		cd_vertex * r=poly.findCW(m_measure).first;
 	
 		if( r==NULL || !r->isReflex() || r->getConcavity() >= FLT_MAX - 1.0 || r->getConcavity()<=d ){
-			done_list.push_back(polys);
+			if (A_poly(poly) > 1e-6) {
+				done_list.push_back(polys);
+			}
 			return;
 		}
 	
@@ -118,13 +120,17 @@ namespace acd2d
 		cd_diagonal dia=cutPolys(sub_polys,polys.front(),cut_l);
 	
 		if (sub_polys.first.empty() && sub_polys.second.empty()) {
-			done_list.push_back(polys);
+			if (A_poly(poly) > 1e-6) {
+				done_list.push_back(polys);
+			}
 			return;
 		}
 
 		//add into to do
-		if (!sub_polys.first.empty()) todo_list.push_back(sub_polys.first);
-		if (!sub_polys.second.empty()) todo_list.push_back(sub_polys.second);
+		if (!sub_polys.first.empty() && A_poly(sub_polys.first.front()) > 1e-6)
+			todo_list.push_back(sub_polys.first);
+		if (!sub_polys.second.empty() && A_poly(sub_polys.second.front()) > 1e-6)
+			todo_list.push_back(sub_polys.second);
 	
 		//store cut line
 		if(store_diagoanls) dia_list.push_back(dia);

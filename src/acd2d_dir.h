@@ -6,6 +6,7 @@
 #ifndef _CD2D_CUT_DIR_H_
 #define _CD2D_CUT_DIR_H_
 
+#include <vector>
 #include "acd2d_data.h"
 #include "acd2d_edge_visibility.h"
  
@@ -96,38 +97,78 @@ namespace acd2d
 	///////////////////////////////////////////////////////////////////////////////
 	// For hole
 	
+	inline bool is_hole_ray_valid(cd_vertex* v, const Point2d& pt)
+	{
+		if (v == NULL || v->getPre() == NULL || v->getNext() == NULL) return true;
+		Vector2d e0 = v->getPos() - v->getPre()->getPos();
+		Vector2d e1 = v->getNext()->getPos() - v->getPos();
+		Vector2d vec = pt - v->getPos();
+		
+		double c0 = e0[0]*vec[1] - e0[1]*vec[0];
+		double c1 = vec[0]*e1[1] - vec[1]*e1[0];
+		
+		// In a CW hole, the obstacle interior has c0 < -1e-5 && c1 < -1e-5.
+		// A ray pointing outward into free space has at least one >= -1e-5.
+		return (c0 >= -1e-5 || c1 >= -1e-5);
+	}
+
 	inline
 	Point2d find_MP(cd_vertex * v, cd_poly& poly)
 	{
-		cd_vertex * head, *cur;
-		head=cur=poly.getHead();
-		Point2d best;
-		double min_dist=1e10;
+		if (v == NULL) return Point2d(0, 0);
+		cd_vertex * head = poly.getHead();
+		if (head == NULL) return v->getPos();
 		
-		do{
-			Point2d pt=cur->computeClosePt(v->getPos());
-			double dist=(pt-v->getPos()).normsqr();
-			if( dist<min_dist ){
-				cd_vertex tmp=*cur;
-				tmp.setPos(pt);
-				if( isResolved(v,&tmp) ){   
-					min_dist=dist;
-					best=pt;
+		cd_vertex * cur = head;
+		Point2d best = head->getPos();
+		double min_dist_sqr = 1e20;
+
+		do {
+			Point2d pt = cur->computeClosePt(v->getPos());
+			double d2 = (pt - v->getPos()).normsqr();
+			if (d2 < min_dist_sqr) {
+				if (is_hole_ray_valid(v, pt)) {
+					Vector2d dir = pt - v->getPos();
+					if (d2 > 1e-8) {
+						Vector2d dir_norm = dir.normalize();
+						cd_line ray;
+						ray.origin = v->getPos();
+						ray.vec = dir_norm;
+						ray.normal.set(-dir_norm[1], dir_norm[0]);
+						ray.support = v;
+						
+						list<cd_vertex*> coll;
+						poly.findCollEdges(coll, ray);
+						
+						double min_u = FLT_MAX;
+						for (auto cv : coll) {
+							if (cv->getU() > 1e-5 && cv->getU() < min_u) {
+								min_u = cv->getU();
+							}
+						}
+						double dist = sqrt(d2);
+						if (min_u >= dist - 1e-3) {
+							min_dist_sqr = d2;
+							best = pt;
+						}
+					} else {
+						min_dist_sqr = d2;
+						best = pt;
+					}
 				}
 			}
-			
-			cur=cur->getNext();
+			cur = cur->getNext();
+		} while (cur != head);
+
+		if (min_dist_sqr > 1e19) {
+			Vector2d dir = -(v->getNormal() + (v->getPre() ? v->getPre()->getNormal() : v->getNormal()));
+			if (dir.normsqr() < 1e-12) dir.set(1.0, 0.0);
+			best = v->getPos() + dir.normalize();
 		}
-		while(cur!=head);
-		
-		if( fabs(min_dist-1e10)<1e-10 ){
-			Vector2d dir=-(v->getNormal()+v->getPre()->getNormal());
-			best=v->getPos()+dir;
-		}
-		
+
 		return best;
 	}
-	
+
 	inline void find_a_good_cutline_for_hole
 	(cd_line& line, cd_vertex * v, cd_poly& poly)
 	{

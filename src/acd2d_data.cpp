@@ -4,6 +4,7 @@
 //------------------------------------------------------------------------------
 
 #include <float.h>
+#include <set>
 #include "acd2d_data.h"
 #include "acd2d_util.h"
 #include "acd2d_eigen.h"
@@ -238,12 +239,19 @@ namespace acd2d
 		if( type!=POUT ) cerr<<"! ERROR: findMaxNotch Error"<<endl;
 		cd_vertex* ptr = head;
 		if (ptr != NULL) {
+			std::set<cd_bridge*> to_del;
 			int count = 0;
 			do {
-				removeBridge(ptr);
+				if (ptr->getBridge() != NULL) {
+					to_del.insert(ptr->getBridge());
+					ptr->setBridge(NULL);
+				}
 				ptr = ptr->getNext();
 				count++;
 			} while (ptr != NULL && ptr != head && count < size + 10);
+			for (std::set<cd_bridge*>::iterator it = to_del.begin(); it != to_del.end(); ++it) {
+				delete *it;
+			}
 		}
 		///////////////////////////////////////////////////////////////////////////
 		construct_bridges(head,tail);

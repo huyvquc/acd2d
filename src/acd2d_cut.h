@@ -112,6 +112,41 @@ namespace acd2d
 	///////////////////////////////////////////////////////////////////////////////
 	
 	
+	inline bool is_cut_valid_for_edge(cd_vertex* cur, const Point2d& inter, const Point2d& cut_origin)
+	{
+		Vector2d v_cut = cut_origin - inter;
+		if (v_cut.normsqr() < 1e-12) return false;
+		
+		cd_vertex* v_next = cur->getNext();
+		if (v_next == NULL) return false;
+		
+		Vector2d e_in, e_out;
+		if ((inter - v_next->getPos()).normsqr() < 1e-8) {
+			cd_vertex* v_nn = v_next->getNext();
+			if (v_nn == NULL) return false;
+			e_in = v_next->getPos() - cur->getPos();
+			e_out = v_nn->getPos() - v_next->getPos();
+		} else if ((inter - cur->getPos()).normsqr() < 1e-8) {
+			cd_vertex* v_pre = cur->getPre();
+			if (v_pre == NULL) return false;
+			e_in = cur->getPos() - v_pre->getPos();
+			e_out = v_next->getPos() - cur->getPos();
+		} else {
+			e_in = v_next->getPos() - cur->getPos();
+			e_out = e_in;
+		}
+		
+		double cross_corner = e_in[0] * e_out[1] - e_in[1] * e_out[0];
+		double cross_in = e_in[0] * v_cut[1] - e_in[1] * v_cut[0];
+		double cross_out = e_out[0] * v_cut[1] - e_out[1] * v_cut[0];
+		
+		if (cross_corner >= -1e-8) {
+			return (cross_in >= -1e-7 && cross_out >= -1e-7);
+		} else {
+			return (cross_in >= -1e-7 || cross_out >= -1e-7);
+		}
+	}
+
 	/**
 	 * Find the edges that will split the out most chain
 	 */
@@ -129,9 +164,19 @@ namespace acd2d
 			if( cur==cut_l.support ) continue;
 			if( cur==cut_l.support->getPre() ) continue;
 			if( cur->getU()<-1e-5 ) continue;
-			if( cur->getU()<min_U ){
-				min_U=cur->getU();
-				closest=cur;
+			
+			bool valid = is_cut_valid_for_edge(cur, cur->getInterPt(), cut_l.origin);
+			
+			if( cur->getU() < min_U - 1e-4 ){
+				min_U = cur->getU();
+				closest = cur;
+			}
+			else if( fabs(cur->getU() - min_U) <= 1e-4 ){
+				bool prev_valid = (closest != NULL && is_cut_valid_for_edge(closest, closest->getInterPt(), cut_l.origin));
+				if( valid && !prev_valid ){
+					closest = cur;
+					min_U = cur->getU();
+				}
 			}
 		}
 	
