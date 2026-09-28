@@ -76,13 +76,9 @@ bool parseARG(int argc, char ** argv)
                     break;
                 case 'p': g_savePS=true; break;
                 case 'c': g_outputCuts=true; break;
-                case 'i': g_showIRIS=true; break;
                 case 'k': g_outputGraph=true; break;
                 default:
-                    if(string(argv[i])=="-iris") g_showIRIS=true;
-                    else if(string(argv[i])=="-vcc" || string(argv[i])=="-vcc_del") { g_showVCC=true; g_vccUseExtension=false; }
-                    else if(string(argv[i])=="-vcc_ext") { g_showVCC=true; g_vccUseExtension=true; }
-                    else if(string(argv[i])=="-no_color" || string(argv[i])=="-nocolor") { g_showColor=false; }
+                    if(string(argv[i])=="-no_color" || string(argv[i])=="-nocolor") { g_showColor=false; }
                     else if(string(argv[i])=="-color") { g_showColor=true; }
                     else if(string(argv[i])=="-graph") { g_outputGraph=true; }
                     else if(string(argv[i])=="-save_graph" || string(argv[i])=="-sg") { g_saveGraph=true; }
@@ -129,9 +125,6 @@ int main( int argc, char ** argv)
     g_saveDecomposition=false;
     g_savePS=false;
     g_outputCuts=false;
-    g_showIRIS=false;
-    g_showVCC=false;
-    g_vccUseExtension=false;
     g_showColor=true;
     g_showLabels=true;
     g_showGraph=true;
@@ -191,15 +184,7 @@ int main( int argc, char ** argv)
         load();
         if(cd.getTodoList().empty()) return 1;
 
-        if (g_showIRIS) {
-            runIRIS(cd);
-            updateIrisGraph();
-        } else if (g_showVCC) {
-            computeVCC(cd, g_vccUseExtension);
-            updateVccGraph();
-        } else {
-            decomposeAll();
-        }
+        decomposeAll();
 
         if(g_outputGraph || g_saveGraph) {
             g_activeGraph.printSummary(cout);
@@ -392,23 +377,7 @@ void Display( void )
         glDepthMask(GL_TRUE);
     }
 
-    // Draw IRIS regions clipped strictly to the polygon interior via Stencil Test
-    if (g_showIRIS) {
-        if (colorid >= 0) {
-            glStencilFunc(GL_EQUAL, 1, 0xFF);
-            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-        }
-        drawIRIS(cd);
-    }
 
-    // Draw VCC regions clipped strictly to the polygon interior via Stencil Test
-    if (g_showVCC) {
-        if (colorid >= 0) {
-            glStencilFunc(GL_EQUAL, 1, 0xFF);
-            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-        }
-        drawVCC(cd);
-    }
 
     glDisable(GL_STENCIL_TEST);
 
@@ -437,11 +406,6 @@ void Keyboard( unsigned char key, int x, int y )
         case 'n': show_normal(); break;
         case 'h': show_hulls(); break;
         case 'c': case 'C': g_showColor=!g_showColor; cout<<"- Polygon Coloring: "<<(g_showColor?"ON":"OFF")<<endl; break;
-        case 'I': g_showIRIS=!g_showIRIS; cout<<"- IRIS Visualization: "<<(g_showIRIS?"ON":"OFF")<<endl; break;
-        case 'i': runIRIS(cd); break;
-        case '`': stepIRIS(cd); break;
-        case 'v': g_vccUseExtension=false; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, false); cout<<"- Delaunay VCC (ReduVCC) Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
-        case 'V': g_vccUseExtension=true; g_showVCC=!g_showVCC; if(g_showVCC) computeVCC(cd, true); cout<<"- Extension VCC (ReduVCC) Visualization: "<<(g_showVCC?"ON":"OFF")<<endl; break;
         case 'l': case 'L': g_showLabels=!g_showLabels; cout<<"- Convex Component Labels: "<<(g_showLabels?"ON":"OFF")<<endl; break;
         case 'g': case 'G': 
             if (g_graphWindow > 0) {
@@ -459,7 +423,7 @@ void Keyboard( unsigned char key, int x, int y )
                 g_activeGraph.exportJSON(json_file);
                 g_activeGraph.exportDOT(dot_file);
             } else {
-                cout << "! No active decomposition graph. Decompose polygon first (d/D/i/v/V)." << endl;
+                cout << "! No active decomposition graph. Decompose polygon first (d/D)." << endl;
             }
             break;
         case 'r': resetCamera(); break;
@@ -467,7 +431,7 @@ void Keyboard( unsigned char key, int x, int y )
         case 'D': decomposeAll(); break;
         case 's': save(); break;
         case 'p': save_PS(); break;
-        case ' ': reload(); resetIRIS(); resetVCC(); g_activeGraph.clear(); break;
+        case ' ': reload(); g_activeGraph.clear(); break;
         case '+' : gli::setScale(gli::getScale()*0.95);
                     break;
         case '-' : gli::setScale(gli::getScale()*1.05);
@@ -500,11 +464,6 @@ void print_gui_usage()
 	cout<<left<<setw(offset)<<"g:"<<"toggle directed weighted graph visualization (ON/OFF)\n";
 	cout<<left<<setw(offset)<<"w:"<<"toggle graph edge weights display (ON/OFF)\n";
 	cout<<left<<setw(offset)<<"k:"<<"print and export graph (JSON + DOT)\n";
-	cout<<left<<setw(offset)<<"i:"<<"run IRIS until >= 98% space coverage is reached\n";
-	cout<<left<<setw(offset)<<"`:"<<"place next IRIS seed (step-by-step inflation)\n";
-	cout<<left<<setw(offset)<<"I:"<<"toggle IRIS region visualization\n";
-	cout<<left<<setw(offset)<<"v:"<<"toggle Delaunay Vertex Clique Cover (VCC) visualization\n";
-	cout<<left<<setw(offset)<<"V:"<<"toggle Extension Triangulation VCC visualization\n";
 	cout<<left<<setw(offset)<<"n:"<<"show/hide normal direction \n";
 	cout<<left<<setw(offset)<<"h:"<<"show/hide convex hulls\n";	
 	cout<<left<<setw(offset)<<"r:"<<"reset camera\n";
@@ -519,15 +478,12 @@ void print_gui_usage()
 void print_usage(char * name)
 {
     int offset=20;
-	cout<<"Usage: "<<name<<" [-tmabgsi] [-no_color] [-vcc] [-vcc_ext] [-graph] [-save_graph] *.poly"<<endl;
+	cout<<"Usage: "<<name<<" [-tmabgs] [-no_color] [-graph] [-save_graph] *.poly"<<endl;
 	cout<<left<<setw(offset)<<"-t value:"<<"tolerance\n";
 	cout<<left<<setw(offset)<<"-m value:"<<"methods: shortestpath (sp), straightline (sl), hybrid1, hybrid2 \n";
 	cout<<left<<setw(offset)<<"-a value:"<<"alpha: weight for concavity \n";
 	cout<<left<<setw(offset)<<"-b value:"<<"beta: weight for distance \n";
 	cout<<left<<setw(offset)<<"-no_color:"<<"disable colored polygon rendering\n";
-	cout<<left<<setw(offset)<<"-i / -iris:"<<"visualize Drake IRIS algorithm region\n";
-	cout<<left<<setw(offset)<<"-vcc / -vcc_del:"<<"visualize Delaunay Vertex Clique Cover (VCC) decomposition\n";
-	cout<<left<<setw(offset)<<"-vcc_ext:"<<"visualize Extension Triangulation VCC decomposition\n";
 	cout<<left<<setw(offset)<<"-graph:"<<"generate and print directed weighted graph\n";
 	cout<<left<<setw(offset)<<"-save_graph / -sg:"<<"save graph to JSON (.graph.json) and DOT (.dot)\n";
 	cout<<left<<setw(offset)<<"-no_labels:"<<"disable convex labels\n";

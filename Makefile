@@ -1,4 +1,3 @@
-
 #-----------------------------------------------------------------------------
 # On Linux,    this should be 'Linux'
 # On Mac OS X, this should be 'MAC_OS_X'
@@ -34,10 +33,6 @@ CXX  = g++
 LINK = g++
 OPTS = -g -std=c++17 -MMD -W -O0 -Wno-deprecated -Wno-unused-parameter -no-pie
 
-DRAKE_DIR  = /home/huy/opt/drake
-DRAKE_INCL = -I$(DRAKE_DIR)/include -I/usr/include/eigen3 -I/home/huy/opt/include
-DRAKE_LIB  = -L$(DRAKE_DIR)/lib -Wl,-rpath,$(DRAKE_DIR)/lib -ldrake
-
 #--------------------------------------------------------------------
 # Xlib and OpenGL
 #--------------------------------------------------------------------
@@ -66,32 +61,20 @@ else
   endif
 endif
 
-	
-#--------------------------------------------------------------------
-# ExtensionCC (Vertex Clique Cover) & CGAL / Boost
-#--------------------------------------------------------------------
-EXT_DIR = /home/huy/ExtensionCC/src/cpp
-EXT_INCL = -I$(EXT_DIR) -I$(EXT_DIR)/triangulation
-EXT_LIB = -lgmp -lmpfr -lboost_system -lboost_filesystem -fopenmp
-
-EXT_SRCS = $(EXT_DIR)/com.cpp $(EXT_DIR)/geometry_utils.cpp $(EXT_DIR)/intersection_predicates.cpp $(EXT_DIR)/visibility.cpp $(EXT_DIR)/dualgraph.cpp $(EXT_DIR)/partition_constructor.cpp $(EXT_DIR)/chgraph.cpp $(EXT_DIR)/rng.cpp $(EXT_DIR)/dsu.cpp $(EXT_DIR)/vcc.cpp $(EXT_DIR)/clique.cpp $(EXT_DIR)/triangulation/polygon_delaunay.cpp $(EXT_DIR)/triangulation/polygon_delaunay_constrained.cpp
-
-EXT_OBJS = $(EXT_SRCS:.cpp=.o)
-
 #--------------------------------------------------------------------
 # Put all together
 #--------------------------------------------------------------------
 TARGET  = acd2d_gui
 SUBDIRS = . src src/mathtool src/hull src/edge_visibility 
 GUIS = gui gui/GL
-INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL) $(DRAKE_INCL) $(EXT_INCL)
+INCLUDE = $(addprefix -I,$(SUBDIRS)) $(addprefix -I,$(GUIS)) $(TRI_INCL)
 SRCS=$(wildcard $(addsuffix /*.cpp,$(SUBDIRS)))
 OBJS=${SRCS:.cpp=.o}
 GUI_SRCS=$(wildcard $(addsuffix /*.cpp,$(GUIS)))
 GUI_OBJS=${GUI_SRCS:.cpp=.o}
-LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB) $(DRAKE_LIB) $(EXT_LIB)
+LIB = $(X_LIB) $(GL_LIB) $(TRI_LIB)
 
-CFLAGS   = $(OPTS) -fopenmp $(INCLUDE) 
+CFLAGS   = $(OPTS) $(INCLUDE) 
 CXXFLAGS = $(CFLAGS) 
 
 
@@ -101,15 +84,15 @@ all :  $(TARGET)
 #--------------------------------------------------------------------
 
 #--------------------------------------------------------------------
-$(TARGET): $(OBJS) $(GUI_OBJS) $(EXT_OBJS)
-	${CXX} ${CXXFLAGS} -o $@ $(OBJS) $(GUI_OBJS) $(EXT_OBJS) $(LIB)
+$(TARGET): $(OBJS) $(GUI_OBJS)
+	${CXX} ${CXXFLAGS} -o $@ $(OBJS) $(GUI_OBJS) $(LIB)
 
 lib: $(OBJS) 
 	ar rcs $(TARGETLIB) $(OBJS)
 
 
 clean:
-	-rm -f $(OBJS) $(GUI_OBJS) $(EXT_OBJS) $(TARGET) Dependencies $(TARGETLIB)
+	-rm -f $(OBJS) $(GUI_OBJS) $(TARGET) Dependencies $(TARGETLIB)
 
 #--------------------------------------------------------------------
 .SUFFIXES: .cpp
@@ -123,5 +106,3 @@ Dependencies:
 	touch Dependencies
 
 include Dependencies
-
-

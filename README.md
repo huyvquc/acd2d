@@ -26,14 +26,18 @@
     -g                  disable OpenGL 
     -s                  save decomposition when OpenGL GUI is disabled
     -ps                 save decomposition to postscript (PS) file (when GUI is disabled)
-    -i / -iris          visualize Drake IRIS algorithm region
+    -graph              generate and print directed weighted graph
+    -save_graph / -sg   save decomposition graph to JSON (.graph.json) and DOT (.dot)
 
 ### GUI options (press key):
 
     d:                  decompose once
     D:                  decompose all
-    i:                  place next IRIS seed (step-by-step inflation)
-    I:                  toggle IRIS region visualization (Shift+I)
+    c:                  toggle polygon coloring (ON/OFF)
+    l:                  toggle convex component labels (ON/OFF)
+    g:                  focus/show tree graph window
+    w:                  toggle graph edge weights display (ON/OFF)
+    k:                  print and export graph (JSON + DOT)
     n:                  show/hide normal direction 
     h:                  show/hide convex hulls
     r:                  reset camera

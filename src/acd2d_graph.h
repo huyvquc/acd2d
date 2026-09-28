@@ -1,6 +1,6 @@
 //------------------------------------------------------------------------------
 // Convex Decomposition Directed Weighted Graph for ACD2D
-// Supports ACD, IRIS, and VCC convex decompositions
+// Supports ACD convex decomposition
 //------------------------------------------------------------------------------
 
 #ifndef _ACD2D_GRAPH_H_
@@ -169,7 +169,7 @@ struct GraphNode {
  */
 class ConvexGraph {
 public:
-    std::string decomposition_type; // "ACD", "IRIS", "VCC-Delaunay", "VCC-Extension"
+    std::string decomposition_type; // "ACD"
     std::vector<GraphNode> nodes;
 
     ConvexGraph() : decomposition_type("None") {}
@@ -448,8 +448,7 @@ public:
 
     /**
      * @brief Determines if two convex pieces are adjacent/neighbors.
-     * Two convex pieces are adjacent iff they share a boundary line segment (L > 0)
-     * or have a positive 2D area overlap (for overlapping covers like IRIS).
+     * Two convex pieces are adjacent iff they share a boundary line segment (L > 0).
      * Single isolated vertex contact (sharing a single corner point) is NOT adjacency.
      */
     static bool arePolygonsAdjacent(
@@ -921,16 +920,10 @@ public:
             setfont("helvetica", 12);
             const char* msg2 = "No active decomposition. Run decomposition in the main window:";
             const char* msg3 = "  Press 'd' / 'D'  : Approximate Convex Decomposition (ACD)";
-            const char* msg4 = "  Press 'i' / '`'  : Drake IRIS Convex Region Inflation";
-            const char* msg5 = "  Press 'v' / 'V'  : Vertex Clique Cover (VCC Delaunay / Extension)";
             glRasterPos2f(win_width * 0.5 - 180.0, win_height * 0.52);
             for (const char* p = msg2; *p; ++p) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *p);
             glRasterPos2f(win_width * 0.5 - 180.0, win_height * 0.44);
             for (const char* p = msg3; *p; ++p) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *p);
-            glRasterPos2f(win_width * 0.5 - 180.0, win_height * 0.38);
-            for (const char* p = msg4; *p; ++p) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *p);
-            glRasterPos2f(win_width * 0.5 - 180.0, win_height * 0.32);
-            for (const char* p = msg5; *p; ++p) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *p);
 
             glPopAttrib();
             return;
