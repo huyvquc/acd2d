@@ -84,6 +84,7 @@ bool parseARG(int argc, char ** argv)
                     else if(string(argv[i])=="-save_graph" || string(argv[i])=="-sg") { g_saveGraph=true; }
                     else if(string(argv[i])=="-no_labels") { g_showLabels=false; }
                     else if(string(argv[i])=="-no_graph") { g_showGraph=false; }
+                    else if(string(argv[i])=="-nogui" || string(argv[i])=="-no_gui") { g_showGL=false; }
                     break;
             }
         }
@@ -487,7 +488,6 @@ void print_usage(char * name)
 	cout<<left<<setw(offset)<<"-graph:"<<"generate and print directed weighted graph\n";
 	cout<<left<<setw(offset)<<"-save_graph / -sg:"<<"save graph to JSON (.graph.json) and DOT (.dot)\n";
 	cout<<left<<setw(offset)<<"-no_labels:"<<"disable convex labels\n";
-	cout<<left<<setw(offset)<<"-no_graph:"<<"disable graph visualization\n";
 	cout<<left<<setw(offset)<<"-g:"<<"disable OpenGL \n";
 	cout<<left<<setw(offset)<<"-s:"<<"save decomposition (when GUI is disabled) \n";
 	cout<<left<<setw(offset)<<"-ps:"<<"save decomposition to postscript (PS) file (when GUI is disabled) \n";

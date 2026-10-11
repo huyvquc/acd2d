@@ -35,6 +35,7 @@ extern bool g_showLabels;
 extern bool g_showGraph;
 extern bool g_showWeights;
 extern acd2d::ConvexGraph g_activeGraph;
+extern cd_polygon g_orig_poly;
 int colorid=-1;
 
 inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
@@ -53,8 +54,23 @@ inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
             if (piece.size() >= 3) pieces.push_back(piece);
         }
     }
+    std::vector<std::vector<Point2d>> obstacle_rings;
+    if (!g_orig_poly.empty()) {
+        for (const auto& poly : g_orig_poly) {
+            std::vector<Point2d> ring;
+            cd_vertex* ptr = poly.getHead();
+            if (ptr != NULL) {
+                do {
+                    ring.push_back(ptr->getPos());
+                    ptr = ptr->getNext();
+                } while (ptr != poly.getHead());
+            }
+            if (ring.size() >= 3) obstacle_rings.push_back(ring);
+        }
+    }
+
     if (!pieces.empty()) {
-        g_activeGraph.buildFromPolygons(pieces, "ACD");
+        g_activeGraph.buildFromPolygons(pieces, "ACD", {}, obstacle_rings);
     } else {
         g_activeGraph.clear();
     }

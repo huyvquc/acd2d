@@ -115,10 +115,13 @@ inline void getDistinctColor(int index, float out_col[3]) {
  * @brief Directed edge in the convex decomposition graph.
  */
 struct GraphEdge {
-    int target;                 // Index of adjacent convex node
-    double weight;              // Edge weight (currently 0.0)
-    double shared_length;       // Shared boundary contact length or overlap measure
+    int target = 0;             // Index of adjacent convex node
+    double shared_length = 0.0; // Shared boundary contact length or overlap measure
     Point2d interface_pt;       // Contact interface midpoint
+    double d_trav = 0.0;        // 1 - normalized(shared_length) in [0, 1]
+    double d_shape = 0.0;       // Normalized shape distance ||s_A - s_B||_2 in [0, 1]
+    double d_corridor = 0.0;    // Normalized (1/conn_A + 1/conn_B) in [0, 1]
+    double d_distance = 0.0;    // Normalized (dist(A -> interface -> B)) in [0, 1]
 };
 
 struct AABB2D {
@@ -159,6 +162,7 @@ struct GraphNode {
     double compactness = 0.0;   // Perimeter^2 / (4 * pi * Area)
     double connectivity = 0.0;  // Sum of interface lengths / Perimeter
     double aspect_ratio = 1.0;  // Max eigenvalue / Min eigenvalue of area covariance matrix
+    double clearance = 0.0;     // Shortest Euclidean distance from centroid to obstacle boundary
     std::vector<Point2d> vertices; // Boundary vertices of the convex polygon
     AABB2D box;                 // Axis-aligned bounding box
     std::vector<GraphEdge> adj; // Outgoing directed edges
@@ -504,77 +508,51 @@ public:
             return true;
         }
 
-        // 2. Check for single point / vertex contact (0D point sharing: vertex-vertex or vertex-edge)
-        // Vertex-Vertex check
-        for (int i = 0; i < m1; ++i) {
-            for (int j = 0; j < m2; ++j) {
-                if (std::abs(p1[i][0] - p2[j][0]) < 1e-3 && std::abs(p1[i][1] - p2[j][1]) < 1e-3) {
-                    if ((p1[i] - p2[j]).norm() < 1e-3) {
-                        shared_len = 0.0;
-                        interface_pt = p1[i];
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // Vertex-Edge check: p1 vertex on p2 edge
-        for (int i = 0; i < m1; ++i) {
-            const Point2d& pt = p1[i];
-            for (int j = 0; j < m2; ++j) {
-                const Point2d& a = p2[j];
-                const Point2d& b = p2[(j + 1) % m2];
-
-                // Point vs Segment AABB check
-                if (pt[0] < std::min(a[0], b[0]) - 1e-3 || pt[0] > std::max(a[0], b[0]) + 1e-3 ||
-                    pt[1] < std::min(a[1], b[1]) - 1e-3 || pt[1] > std::max(a[1], b[1]) + 1e-3) {
-                    continue;
-                }
-
-                Vector2d e(b[0] - a[0], b[1] - a[1]);
-                double L = e.norm();
-                if (L < 1e-6) continue;
-                Vector2d u(e[0] / L, e[1] / L);
-                Vector2d n(-u[1], u[0]);
-                double perp_dist = std::abs((pt[0] - a[0]) * n[0] + (pt[1] - a[1]) * n[1]);
-                double proj = (pt[0] - a[0]) * u[0] + (pt[1] - a[1]) * u[1];
-                if (perp_dist < 1e-3 && proj >= -1e-4 && proj <= L + 1e-4) {
-                    shared_len = 0.0;
-                    interface_pt = pt;
-                    return true;
-                }
-            }
-        }
-
-        // Vertex-Edge check: p2 vertex on p1 edge
-        for (int j = 0; j < m2; ++j) {
-            const Point2d& pt = p2[j];
-            for (int i = 0; i < m1; ++i) {
-                const Point2d& a = p1[i];
-                const Point2d& b = p1[(i + 1) % m1];
-
-                // Point vs Segment AABB check
-                if (pt[0] < std::min(a[0], b[0]) - 1e-3 || pt[0] > std::max(a[0], b[0]) + 1e-3 ||
-                    pt[1] < std::min(a[1], b[1]) - 1e-3 || pt[1] > std::max(a[1], b[1]) + 1e-3) {
-                    continue;
-                }
-
-                Vector2d e(b[0] - a[0], b[1] - a[1]);
-                double L = e.norm();
-                if (L < 1e-6) continue;
-                Vector2d u(e[0] / L, e[1] / L);
-                Vector2d n(-u[1], u[0]);
-                double perp_dist = std::abs((pt[0] - a[0]) * n[0] + (pt[1] - a[1]) * n[1]);
-                double proj = (pt[0] - a[0]) * u[0] + (pt[1] - a[1]) * u[1];
-                if (perp_dist < 1e-3 && proj >= -1e-4 && proj <= L + 1e-4) {
-                    shared_len = 0.0;
-                    interface_pt = pt;
-                    return true;
-                }
-            }
-        }
-
         return false;
+    }
+
+    /**
+     * @brief Computes shortest distance from point P to line segment [A, B].
+     */
+    static double distancePointToSegment(const Point2d& P, const Point2d& A, const Point2d& B) {
+        double dx = B[0] - A[0];
+        double dy = B[1] - A[1];
+        double l2 = dx * dx + dy * dy;
+        if (l2 < 1e-14) {
+            double ex = P[0] - A[0];
+            double ey = P[1] - A[1];
+            return std::sqrt(ex * ex + ey * ey);
+        }
+        double t = ((P[0] - A[0]) * dx + (P[1] - A[1]) * dy) / l2;
+        if (t < 0.0) t = 0.0;
+        else if (t > 1.0) t = 1.0;
+        double qx = A[0] + t * dx;
+        double qy = A[1] + t * dy;
+        double rx = P[0] - qx;
+        double ry = P[1] - qy;
+        return std::sqrt(rx * rx + ry * ry);
+    }
+
+    /**
+     * @brief Computes clearance (shortest distance) from a point to a collection of obstacle rings.
+     */
+    static double computePointClearance(
+        const Point2d& pt,
+        const std::vector<std::vector<Point2d>>& obstacle_rings
+    ) {
+        if (obstacle_rings.empty()) return 0.0;
+        double min_dist = 1e30;
+        for (const auto& ring : obstacle_rings) {
+            int n = static_cast<int>(ring.size());
+            if (n < 2) continue;
+            for (int i = 0; i < n; ++i) {
+                const Point2d& p1 = ring[i];
+                const Point2d& p2 = ring[(i + 1) % n];
+                double d = distancePointToSegment(pt, p1, p2);
+                if (d < min_dist) min_dist = d;
+            }
+        }
+        return (min_dist < 1e29) ? min_dist : 0.0;
     }
 
     /**
@@ -583,7 +561,8 @@ public:
     void buildFromPolygons(
         const std::vector<std::vector<Point2d>>& pieces,
         const std::string& type_name,
-        const std::vector<Point2d>& custom_centers = {}
+        const std::vector<Point2d>& custom_centers = {},
+        const std::vector<std::vector<Point2d>>& obstacle_rings = {}
     ) {
         clear();
         decomposition_type = type_name;
@@ -624,7 +603,6 @@ public:
                     // Directed edge i -> j
                     GraphEdge e_ij;
                     e_ij.target = j;
-                    e_ij.weight = 0.0; // Fixed to 0.0 
                     e_ij.shared_length = shared_len;
                     e_ij.interface_pt = if_pt;
                     nodes[i].adj.push_back(e_ij);
@@ -632,7 +610,6 @@ public:
                     // Directed edge j -> i
                     GraphEdge e_ji;
                     e_ji.target = i;
-                    e_ji.weight = 0.0; // Fixed to 0.0 
                     e_ji.shared_length = shared_len;
                     e_ji.interface_pt = if_pt;
                     nodes[j].adj.push_back(e_ji);
@@ -640,13 +617,161 @@ public:
             }
         }
 
-        // Step 3: Compute connectivity for each polygon (sum of interfaces length / perimeter)
+        // Step 3: Compute connectivity and clearance for each polygon
+        std::vector<std::vector<Point2d>> effective_obstacles = obstacle_rings;
+        if (effective_obstacles.empty()) {
+            effective_obstacles = pieces; // Fallback: pieces boundaries
+        }
+
         for (int i = 0; i < num_pieces; ++i) {
             double total_interface_len = 0.0;
             for (const auto& e : nodes[i].adj) {
                 total_interface_len += e.shared_length;
             }
             nodes[i].connectivity = (nodes[i].perimeter > 1e-12) ? (total_interface_len / nodes[i].perimeter) : 0.0;
+            nodes[i].clearance = computePointClearance(nodes[i].centroid, effective_obstacles);
+        }
+
+        // Step 4: Compute normalized edge metrics
+        computeEdgeCosts();
+    }
+
+    /**
+     * @brief Computes raw normalized edge metric components for all edges in the graph:
+     * - d_trav = normalized(shared_length * min(cl_A, cl_B)) in [0, 1] (benefit type)
+     * - d_shape = normalized(||s_A - s_B||_2) in [0, 1] with s_X = [Area, Diameter, Aspect_Ratio, Compactness] normalized to [0, 1]
+     * - d_corridor = normalized(1/conn_A + 1/conn_B) in [0, 1]
+     * - d_distance = normalized(dist(centroid_A -> interface_pt) + dist(interface_pt -> centroid_B)) in [0, 1]
+     */
+    void computeEdgeCosts() {
+        int num_pieces = static_cast<int>(nodes.size());
+        if (num_pieces < 2) return;
+
+        bool has_edges = false;
+        for (const auto& n : nodes) {
+            if (!n.adj.empty()) {
+                has_edges = true;
+                break;
+            }
+        }
+        if (!has_edges) return;
+
+        // 1. Min/max for individual node shape features: [Area, Diameter, Aspect_Ratio, Compactness]
+        double min_area = 1e30, max_area = -1e30;
+        double min_diam = 1e30, max_diam = -1e30;
+        double min_ar   = 1e30, max_ar   = -1e30;
+        double min_comp = 1e30, max_comp = -1e30;
+
+        for (const auto& n : nodes) {
+            min_area = std::min(min_area, n.area);
+            max_area = std::max(max_area, n.area);
+            min_diam = std::min(min_diam, n.diameter);
+            max_diam = std::max(max_diam, n.diameter);
+            min_ar   = std::min(min_ar,   n.aspect_ratio);
+            max_ar   = std::max(max_ar,   n.aspect_ratio);
+            min_comp = std::min(min_comp, n.compactness);
+            max_comp = std::max(max_comp, n.compactness);
+        }
+
+        // Min-Max normalization for Cost-type criteria: (x - min) / (max - min)
+        auto norm_cost = [](double val, double min_v, double max_v) -> double {
+            if (max_v - min_v > 1e-12) {
+                return (val - min_v) / (max_v - min_v);
+            }
+            return 0.0;
+        };
+
+        // Min-Max normalization for Benefit-type criteria: (max - x) / (max - min)
+        auto norm_benefit = [](double val, double min_v, double max_v) -> double {
+            if (max_v - min_v > 1e-12) {
+                return (max_v - val) / (max_v - min_v);
+            }
+            return 0.0;
+        };
+
+        struct ShapeVec {
+            double a = 0.0, d = 0.0, ar = 0.0, c = 0.0;
+        };
+        std::vector<ShapeVec> norm_shapes(num_pieces);
+        for (int i = 0; i < num_pieces; ++i) {
+            norm_shapes[i].a  = norm_benefit(nodes[i].area, min_area, max_area);
+            norm_shapes[i].d  = norm_cost(nodes[i].diameter, min_diam, max_diam);
+            norm_shapes[i].ar = norm_cost(nodes[i].aspect_ratio, min_ar, max_ar);
+            norm_shapes[i].c  = norm_cost(nodes[i].compactness, min_comp, max_comp);
+        }
+
+        // 2. Collect min and max across all undirected edges (i < j)
+        double min_trav_raw   = 1e30, max_trav_raw   = -1e30;
+        double min_shape_dist = 1e30, max_shape_dist = -1e30;
+        double min_corridor   = 1e30, max_corridor   = -1e30;
+        double min_dist       = 1e30, max_dist       = -1e30;
+
+        for (int i = 0; i < num_pieces; ++i) {
+            for (const auto& e : nodes[i].adj) {
+                int j = e.target;
+                if (i >= j) continue; // process each undirected edge once for min/max
+
+                // Traversal term: shared_length * min(cl_A, cl_B)
+                double min_cl = std::min(nodes[i].clearance, nodes[j].clearance);
+                double trav_raw = e.shared_length * min_cl;
+                min_trav_raw = std::min(min_trav_raw, trav_raw);
+                max_trav_raw = std::max(max_trav_raw, trav_raw);
+
+                // Shape distance ||s_A - s_B||_2
+                double da  = norm_shapes[i].a  - norm_shapes[j].a;
+                double dd  = norm_shapes[i].d  - norm_shapes[j].d;
+                double dar = norm_shapes[i].ar - norm_shapes[j].ar;
+                double dc  = norm_shapes[i].c  - norm_shapes[j].c;
+                double shape_dist = std::sqrt(da * da + dd * dd + dar * dar + dc * dc);
+                min_shape_dist = std::min(min_shape_dist, shape_dist);
+                max_shape_dist = std::max(max_shape_dist, shape_dist);
+
+                // Corridor term (1/conn_A + 1/conn_B)
+                double conn_a = std::max(nodes[i].connectivity, 1e-6);
+                double conn_b = std::max(nodes[j].connectivity, 1e-6);
+                double corr_raw = (1.0 / conn_a) + (1.0 / conn_b);
+                min_corridor = std::min(min_corridor, corr_raw);
+                max_corridor = std::max(max_corridor, corr_raw);
+
+                // Path distance centroid_A -> interface_pt -> centroid_B
+                double d1 = (nodes[i].centroid - e.interface_pt).norm();
+                double d2 = (e.interface_pt - nodes[j].centroid).norm();
+                double dist_raw = d1 + d2;
+                min_dist = std::min(min_dist, dist_raw);
+                max_dist = std::max(max_dist, dist_raw);
+            }
+        }
+
+        // 3. Compute normalized component costs and final symmetric cost
+        for (int i = 0; i < num_pieces; ++i) {
+            for (auto& e : nodes[i].adj) {
+                int j = e.target;
+
+                // d_trav: benefit type, (max - x) / (max - min) on (shared_length * min(cl_A, cl_B))
+                double min_cl = std::min(nodes[i].clearance, nodes[j].clearance);
+                double trav_raw = e.shared_length * min_cl;
+                e.d_trav = norm_benefit(trav_raw, min_trav_raw, max_trav_raw);
+
+                // d_shape: cost type, (x - min) / (max - min)
+                double da  = norm_shapes[i].a  - norm_shapes[j].a;
+                double dd  = norm_shapes[i].d  - norm_shapes[j].d;
+                double dar = norm_shapes[i].ar - norm_shapes[j].ar;
+                double dc  = norm_shapes[i].c  - norm_shapes[j].c;
+                double shape_dist = std::sqrt(da * da + dd * dd + dar * dar + dc * dc);
+                e.d_shape = norm_cost(shape_dist, min_shape_dist, max_shape_dist);
+
+                // d_corridor: cost type, (x - min) / (max - min)
+                double conn_a = std::max(nodes[i].connectivity, 1e-6);
+                double conn_b = std::max(nodes[j].connectivity, 1e-6);
+                double corr_raw = (1.0 / conn_a) + (1.0 / conn_b);
+                e.d_corridor = norm_cost(corr_raw, min_corridor, max_corridor);
+
+                // d_distance: cost type, (x - min) / (max - min)
+                double d1 = (nodes[i].centroid - e.interface_pt).norm();
+                double d2 = (e.interface_pt - nodes[j].centroid).norm();
+                double dist_raw = d1 + d2;
+                e.d_distance = norm_cost(dist_raw, min_dist, max_dist);
+            }
         }
     }
 
@@ -681,6 +806,7 @@ public:
                << ", Compact=" << std::setprecision(4) << n.compactness
                << ", Connect=" << std::setprecision(4) << n.connectivity
                << ", AR=" << std::setprecision(4) << n.aspect_ratio
+               << ", Clear=" << std::setprecision(4) << n.clearance
                << ", Vertices=" << n.vertices.size() << "\n";
 
             if (n.adj.empty()) {
@@ -688,9 +814,12 @@ public:
             } else {
                 for (const auto& e : n.adj) {
                     os << "   -> " << std::left << std::setw(4) << nodes[e.target].label
-                       << " [weight=" << std::fixed << std::setprecision(2) << e.weight
-                       << ", shared_len=" << e.shared_length
-                       << ", contact_pt=(" << e.interface_pt[0] << ", " << e.interface_pt[1] << ")]\n";
+                       << " [d_trav=" << std::fixed << std::setprecision(3) << e.d_trav
+                       << ", d_shape=" << e.d_shape
+                       << ", d_corr=" << e.d_corridor
+                       << ", d_dist=" << e.d_distance
+                       << ", shared_len=" << std::setprecision(4) << e.shared_length
+                       << ", contact_pt=(" << std::setprecision(2) << e.interface_pt[0] << ", " << e.interface_pt[1] << ")]\n";
                 }
             }
         }
@@ -718,7 +847,6 @@ public:
             const auto& n = nodes[i];
             fout << "    {\n";
             fout << "      \"id\": " << n.id << ",\n";
-            fout << "      \"label\": \"" << n.label << "\",\n";
             fout << "      \"centroid\": [" << std::fixed << std::setprecision(4) 
                  << n.centroid[0] << ", " << n.centroid[1] << "],\n";
             fout << "      \"area\": " << n.area << ",\n";
@@ -727,6 +855,7 @@ public:
             fout << "      \"compactness\": " << n.compactness << ",\n";
             fout << "      \"connectivity\": " << n.connectivity << ",\n";
             fout << "      \"aspect_ratio\": " << n.aspect_ratio << ",\n";
+            fout << "      \"clearance\": " << n.clearance << ",\n";
             fout << "      \"polygon\": [";
             for (size_t v = 0; v < n.vertices.size(); ++v) {
                 fout << "[" << n.vertices[v][0] << ", " << n.vertices[v][1] << "]";
@@ -747,9 +876,10 @@ public:
                 fout << "    {\n";
                 fout << "      \"from\": " << n.id << ",\n";
                 fout << "      \"to\": " << e.target << ",\n";
-                fout << "      \"from_label\": \"" << n.label << "\",\n";
-                fout << "      \"to_label\": \"" << nodes[e.target].label << "\",\n";
-                fout << "      \"weight\": " << std::fixed << std::setprecision(4) << e.weight << ",\n";
+                fout << "      \"d_trav\": " << e.d_trav << ",\n";
+                fout << "      \"d_shape\": " << e.d_shape << ",\n";
+                fout << "      \"d_corridor\": " << e.d_corridor << ",\n";
+                fout << "      \"d_distance\": " << e.d_distance << ",\n";
                 fout << "      \"shared_length\": " << e.shared_length << ",\n";
                 fout << "      \"interface_pt\": [" << e.interface_pt[0] << ", " << e.interface_pt[1] << "]\n";
                 fout << "    }";
@@ -765,6 +895,7 @@ public:
 
     /**
      * @brief Exports the graph to a Graphviz DOT file.
+     * Uses undirected graph notation with a single edge per adjacent pair (u < v) for clean readability.
      */
     bool exportDOT(const std::string& filepath) const {
         std::ofstream fout(filepath.c_str());
@@ -773,7 +904,7 @@ public:
             return false;
         }
 
-        fout << "digraph ConvexGraph {\n";
+        fout << "graph ConvexGraph {\n";
         fout << "  graph [label=\"" << decomposition_type << " Convex Decomposition Graph\", fontsize=14];\n";
         fout << "  node [shape=circle, style=filled, fillcolor=\"#e0f0ff\", color=\"#0066cc\", fontname=\"Helvetica\"];\n";
         fout << "  edge [fontname=\"Helvetica\", fontsize=10, color=\"#444444\"];\n\n";
@@ -786,9 +917,11 @@ public:
 
         for (const auto& n : nodes) {
             for (const auto& e : n.adj) {
-                fout << "  " << n.id << " -> " << e.target 
-                     << " [label=\"w=" << std::fixed << std::setprecision(1) << e.weight 
-                     << "\", weight=" << e.weight << "];\n";
+                if (n.id < e.target) {
+                    fout << "  " << n.id << " -- " << e.target 
+                         << " [label=\"d=" << std::fixed << std::setprecision(3) << e.d_distance 
+                         << "\"];\n";
+                }
             }
         }
 
@@ -999,7 +1132,7 @@ public:
         std::stringstream ss_info;
         ss_info << "Vertices: " << n_nodes 
                 << " | Directed Edges: " << getTotalDirectedEdges() 
-                << " (weight = 0.0) | Hierarchy Levels: " << num_layers;
+                << " | Hierarchy Levels: " << num_layers;
         std::string info_str = ss_info.str();
         glRasterPos2f(25.0, win_height - 50.0);
         for (char c : info_str) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, c);
