@@ -70,7 +70,7 @@ inline void updateAcdGraph(cd_2d& cd2d, double decomp_time_sec = -1.0) {
     }
 
     if (!pieces.empty()) {
-        g_activeGraph.buildFromPolygons(pieces, "ACD", {}, obstacle_rings);
+        g_activeGraph.buildFromPolygons(pieces, "ACD", obstacle_rings);
     } else {
         g_activeGraph.clear();
     }

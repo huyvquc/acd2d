@@ -128,18 +128,14 @@ struct AABB2D {
     double min_x = 1e30, max_x = -1e30;
     double min_y = 1e30, max_y = -1e30;
 
-    void update(const Point2d& pt) {
-        if (pt[0] < min_x) min_x = pt[0];
-        if (pt[0] > max_x) max_x = pt[0];
-        if (pt[1] < min_y) min_y = pt[1];
-        if (pt[1] > max_y) max_y = pt[1];
-    }
-
     void computeFrom(const std::vector<Point2d>& pts) {
         min_x = 1e30; max_x = -1e30;
         min_y = 1e30; max_y = -1e30;
         for (const auto& pt : pts) {
-            update(pt);
+            if (pt[0] < min_x) min_x = pt[0];
+            if (pt[0] > max_x) max_x = pt[0];
+            if (pt[1] < min_y) min_y = pt[1];
+            if (pt[1] > max_y) max_y = pt[1];
         }
     }
 
@@ -200,11 +196,6 @@ public:
         double& area
     ) {
         int n = static_cast<int>(pts.size());
-        if (n < 3) {
-            centroid = (n > 0) ? pts[0] : Point2d(0, 0);
-            area = 0.0;
-            return;
-        }
 
         double signed_area = 0.0;
         double cx = 0.0;
@@ -222,19 +213,9 @@ public:
         signed_area *= 0.5;
         area = std::abs(signed_area);
 
-        if (area > 1e-7) {
-            cx /= (6.0 * signed_area);
-            cy /= (6.0 * signed_area);
-            centroid = Point2d(cx, cy);
-        } else {
-            // Fallback to arithmetic mean of vertices
-            double sum_x = 0.0, sum_y = 0.0;
-            for (const auto& p : pts) {
-                sum_x += p[0];
-                sum_y += p[1];
-            }
-            centroid = Point2d(sum_x / n, sum_y / n);
-        }
+        cx /= (6.0 * signed_area);
+        cy /= (6.0 * signed_area);
+        centroid = Point2d(cx, cy);
     }
 
     /**
@@ -380,75 +361,6 @@ public:
         return false;
     }
 
-    /**
-     * @brief Computes polygon intersection area using Sutherland-Hodgman polygon clipping.
-     */
-    static void ensureCCW(std::vector<Point2d>& pts) {
-        int n = static_cast<int>(pts.size());
-        if (n < 3) return;
-        double signed_area = 0.0;
-        for (int i = 0; i < n; ++i) {
-            signed_area += (pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1]);
-        }
-        if (signed_area < 0) {
-            std::reverse(pts.begin(), pts.end());
-        }
-    }
-
-    static std::vector<Point2d> clipConvexPolygon(
-        const std::vector<Point2d>& subjectPoly,
-        const std::vector<Point2d>& clipPoly
-    ) {
-        std::vector<Point2d> outputList = subjectPoly;
-        int clipSize = static_cast<int>(clipPoly.size());
-        if (clipSize < 3) return {};
-
-        for (int i = 0; i < clipSize; ++i) {
-            if (outputList.empty()) break;
-            std::vector<Point2d> inputList = outputList;
-            outputList.clear();
-
-            Point2d c1 = clipPoly[i];
-            Point2d c2 = clipPoly[(i + 1) % clipSize];
-
-            auto isInside = [&](const Point2d& p) -> bool {
-                return (c2[0] - c1[0]) * (p[1] - c1[1]) - (c2[1] - c1[1]) * (p[0] - c1[0]) >= -1e-7;
-            };
-
-            auto intersection = [&](const Point2d& p1, const Point2d& p2) -> Point2d {
-                double A1 = p2[1] - p1[1];
-                double B1 = p1[0] - p2[0];
-                double C1 = A1 * p1[0] + B1 * p1[1];
-
-                double A2 = c2[1] - c1[1];
-                double B2 = c1[0] - c2[0];
-                double C2 = A2 * c1[0] + B2 * c1[1];
-
-                double det = A1 * B2 - A2 * B1;
-                if (std::abs(det) < 1e-10) return p1;
-                return Point2d((B2 * C1 - B1 * C2) / det, (A1 * C2 - A2 * C1) / det);
-            };
-
-            int inSize = static_cast<int>(inputList.size());
-            for (int j = 0; j < inSize; ++j) {
-                Point2d currentPt = inputList[j];
-                Point2d prevPt = inputList[(j + inSize - 1) % inSize];
-
-                bool curIn = isInside(currentPt);
-                bool prevIn = isInside(prevPt);
-
-                if (curIn) {
-                    if (!prevIn) {
-                        outputList.push_back(intersection(prevPt, currentPt));
-                    }
-                    outputList.push_back(currentPt);
-                } else if (prevIn) {
-                    outputList.push_back(intersection(prevPt, currentPt));
-                }
-            }
-        }
-        return outputList;
-    }
 
     /**
      * @brief Determines if two convex pieces are adjacent/neighbors.
@@ -465,8 +377,6 @@ public:
         const auto& p2 = n2.vertices;
         int m1 = static_cast<int>(p1.size());
         int m2 = static_cast<int>(p2.size());
-
-        if (m1 < 3 || m2 < 3) return false;
 
         // 1. Check for collinear shared boundary segments (Shared edge contact L > 0)
         double total_shared = 0.0;
@@ -561,7 +471,6 @@ public:
     void buildFromPolygons(
         const std::vector<std::vector<Point2d>>& pieces,
         const std::string& type_name,
-        const std::vector<Point2d>& custom_centers = {},
         const std::vector<std::vector<Point2d>>& obstacle_rings = {}
     ) {
         clear();
@@ -584,9 +493,6 @@ public:
             computePolygonPerimeterAndDiameter(pieces[i], nodes[i].perimeter, nodes[i].diameter);
             nodes[i].compactness = computePolygonCompactness(nodes[i].perimeter, nodes[i].area);
             nodes[i].aspect_ratio = computePolygonAspectRatio(pieces[i], nodes[i].centroid, nodes[i].area);
-            if (i < static_cast<int>(custom_centers.size())) {
-                nodes[i].centroid = custom_centers[i];
-            }
         }
 
         // Step 2: Determine adjacency using fast AABB pruning and construct directed edges (weight = 0.0)

@@ -3,25 +3,22 @@
 Dijkstra Shortest Path Finder & Visualizer for Convex Decomposition Graphs (ACD2D)
 =================================================================================
 
-Reads an ACD2D / IRIS / VCC convex decomposition JSON graph file, takes two polygon labels
+Reads an ACD2D convex decomposition JSON graph file, takes two polygon labels
 (start and goal), executes Dijkstra's algorithm to compute the minimum-cost path, and generates
 a high-contrast visualization of the original polygon mesh and the path taken.
 
 Usage:
-  python3 dijkstra_path.py <graph_json> <start_label> <goal_label> [options]
+  python3 dijkstra_path.py <graph_json> <start_label> <goal_label> [-o output.png]
 
 Examples:
-  python3 dijkstra_path.py testenv/narrow.poly-ACD.graph.json C0 C1
-  python3 dijkstra_path.py testenv/room.poly-ACD.graph.json C0 C20 -o room_path.png
-  python3 dijkstra_path.py testenv/narrow.poly-ACD.graph.json 0 15 --metric cost --theme dark
-  python3 dijkstra_path.py testenv/narrow.poly-ACD.graph.json --list-labels
+  python3 dijkstra_path.py polygons/hole.poly-ACD.graph.json C1 C6
+  python3 dijkstra_path.py polygons/room.poly-ACD.graph.json C0 C20 -o room_path.png
 """
 
 import argparse
 import colorsys
 import heapq
 import json
-import math
 import os
 import sys
 import time
@@ -31,8 +28,7 @@ import matplotlib
 # If running in non-GUI / headless environment, default to Agg when needed
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Polygon as MplPoly, FancyArrowPatch, Circle
-    from matplotlib.collections import PatchCollection
+    from matplotlib.patches import Polygon as MplPoly, FancyArrowPatch
 except ImportError as e:
     sys.exit(f"Error: matplotlib is required. Please install it via `pip install matplotlib`.\n{e}")
 
@@ -150,21 +146,12 @@ class DecompositionGraph:
         self.vertices_data: List[Dict[str, Any]] = data.get("vertices", [])
         self.edges_data: List[Dict[str, Any]] = data.get("edges", [])
 
-        # Index maps
+        # Index vertices by ID
         self.nodes_by_id: Dict[int, Dict[str, Any]] = {}
-        self.nodes_by_label: Dict[str, Dict[str, Any]] = {}
-        self.label_to_id: Dict[str, int] = {}
-
-        # Parse vertices
         for v in self.vertices_data:
             vid = int(v["id"])
-            lbl = str(v.get("label", f"C{vid}"))
+            v.setdefault("label", f"C{vid}")
             self.nodes_by_id[vid] = v
-            self.nodes_by_label[lbl] = v
-            self.nodes_by_label[lbl.upper()] = v
-            self.label_to_id[lbl] = vid
-            self.label_to_id[lbl.upper()] = vid
-            self.label_to_id[str(vid)] = vid
 
         # Build adjacency list: adj[from_id] = list of (to_id, edge_dict)
         self.adj: Dict[int, List[Tuple[int, Dict[str, Any]]]] = {
@@ -185,148 +172,49 @@ class DecompositionGraph:
             data = json.load(f)
         return cls(data, filepath=filepath)
 
-    def resolve_node(self, query: Any) -> Tuple[int, Dict[str, Any]]:
-        """Resolves a user-provided query (label like 'C0', 'c0', or ID '0' or 0) to (node_id, node_dict)."""
-        query_str = str(query).strip()
-
-        # Direct match in label map
-        if query_str in self.label_to_id:
-            nid = self.label_to_id[query_str]
-            return nid, self.nodes_by_id[nid]
-
-        if query_str.upper() in self.label_to_id:
-            nid = self.label_to_id[query_str.upper()]
-            return nid, self.nodes_by_id[nid]
-
-        # Check if user entered an integer ID directly
-        try:
-            nid = int(query_str)
-            if nid in self.nodes_by_id:
-                return nid, self.nodes_by_id[nid]
-        except ValueError:
-            pass
-
-        # Check if query without 'C' prefix or with 'C' prefix matches
-        if query_str.upper().startswith("C"):
-            sub = query_str[1:]
-            try:
-                nid = int(sub)
-                if nid in self.nodes_by_id:
-                    return nid, self.nodes_by_id[nid]
-            except ValueError:
-                pass
-        else:
-            cand = f"C{query_str}"
-            if cand in self.label_to_id:
-                nid = self.label_to_id[cand]
-                return nid, self.nodes_by_id[nid]
-
-        available = [self.nodes_by_id[vid].get("label", f"C{vid}") for vid in sorted(self.nodes_by_id.keys())]
-        preview = ", ".join(available[:15]) + ("..." if len(available) > 15 else "")
-        raise ValueError(
-            f"Polygon label or ID '{query}' not found in graph.\n"
-            f"Available polygons ({len(available)} total): [{preview}]"
-        )
-
 
 # ==============================================================================
 # Dijkstra Shortest Path Algorithm
 # ==============================================================================
 
 def compute_edge_cost(
-    u_node: Dict[str, Any],
-    v_node: Dict[str, Any],
     edge: Dict[str, Any],
-    metric: str = "cost",
     weights: Optional[Tuple[float, float, float, float]] = None
 ) -> float:
-    """Calculates edge traversal cost based on the specified metric."""
-    metric = metric.lower().strip()
+    """Calculates edge traversal cost using linear weights from weights.json."""
+    if weights is not None:
+        w_trav, w_shape, w_corr, w_dist = weights
+    else:
+        cfg = load_weights_config()
+        w_trav, w_shape, w_corr, w_dist = cfg["w_trav"], cfg["w_shape"], cfg["w_corr"], cfg["w_dist"]
 
-    if metric in ("cost", "default"):
-        if weights is not None:
-            w_trav, w_shape, w_corr, w_dist = weights
-        else:
-            cfg = load_weights_config()
-            w_trav, w_shape, w_corr, w_dist = cfg["w_trav"], cfg["w_shape"], cfg["w_corr"], cfg["w_dist"]
-
-        if any(k in edge for k in ("d_trav", "d_shape", "d_corridor", "d_distance")):
-            d_t = float(edge.get("d_trav", 0.0))
-            d_s = float(edge.get("d_shape", 0.0))
-            d_c = float(edge.get("d_corridor", 0.0))
-            d_d = float(edge.get("d_distance", 0.0))
-            return w_trav * d_t + w_shape * d_s + w_corr * d_c + w_dist * d_d
-        if "cost" in edge and edge["cost"] is not None:
-            return float(edge["cost"])
-        if "weight" in edge and edge["weight"] is not None and edge["weight"] > 0:
-            return float(edge["weight"])
-        metric = "euclidean"
-
-    if metric in ("weight", "wt"):
-        if "weight" in edge and edge["weight"] is not None:
-            return float(edge["weight"])
-        return float(edge.get("cost", 1.0))
-
-    if metric in ("d_distance", "dist", "distance"):
-        if "d_distance" in edge and edge["d_distance"] is not None:
-            return float(edge["d_distance"])
-        metric = "euclidean"
-
-    if metric in ("d_trav", "trav", "traversability"):
-        if "d_trav" in edge and edge["d_trav"] is not None:
-            return float(edge["d_trav"])
-        return float(edge.get("cost", 1.0))
-
-    if metric in ("d_shape", "shape"):
-        if "d_shape" in edge and edge["d_shape"] is not None:
-            return float(edge["d_shape"])
-        return float(edge.get("cost", 1.0))
-
-    if metric in ("d_corridor", "corridor"):
-        if "d_corridor" in edge and edge["d_corridor"] is not None:
-            return float(edge["d_corridor"])
-        return float(edge.get("cost", 1.0))
-
-    if metric in ("hop", "hops", "unweighted", "step"):
-        return 1.0
-
-    if metric in ("euclidean", "geom", "geometry"):
-        cu = u_node.get("centroid", [0.0, 0.0])
-        cv = v_node.get("centroid", [0.0, 0.0])
-        dx = cu[0] - cv[0]
-        dy = cu[1] - cv[1]
-        return math.hypot(dx, dy)
-
-    # Fallback to edge cost or 1.0
-    return float(edge.get("cost", edge.get("weight", 1.0)))
+    d_t = float(edge.get("d_trav", 0.0))
+    d_s = float(edge.get("d_shape", 0.0))
+    d_c = float(edge.get("d_corridor", 0.0))
+    d_d = float(edge.get("d_distance", 0.0))
+    return w_trav * d_t + w_shape * d_s + w_corr * d_c + w_dist * d_d
 
 
 def dijkstra_shortest_path(
     graph: DecompositionGraph,
-    start_query: Any,
-    goal_query: Any,
-    metric: str = "cost",
-    undirected: bool = False,
+    start_label: str,
+    goal_label: str,
     weights: Optional[Tuple[float, float, float, float]] = None
 ) -> Dict[str, Any]:
-    """
-    Executes Dijkstra's algorithm from start to goal.
 
-    Returns a comprehensive result dictionary with path details, costs, and metadata.
-    """
-    start_id, start_node = graph.resolve_node(start_query)
-    goal_id, goal_node = graph.resolve_node(goal_query)
+    def parse_cx(label: str) -> Tuple[int, Dict[str, Any]]:
+        s = str(label).strip()
+        if not ((s.startswith("C") or s.startswith("c")) and s[1:].isdigit()):
+            raise ValueError(f"Invalid polygon label '{label}'. Must be in 'CX' format (e.g., C0, C1).")
+        nid = int(s[1:])
+        if nid not in graph.nodes_by_id:
+            raise ValueError(f"Polygon '{label}' not found in graph.")
+        return nid, graph.nodes_by_id[nid]
+
+    start_id, start_node = parse_cx(start_label)
+    goal_id, goal_node = parse_cx(goal_label)
 
     t0 = time.perf_counter()
-
-    # If undirected traversal requested, also index reverse edges
-    adj_map: Dict[int, List[Tuple[int, Dict[str, Any]]]] = {vid: list(edges) for vid, edges in graph.adj.items()}
-    if undirected:
-        for u, edges in graph.adj.items():
-            for v, edata in edges:
-                # Add reverse edge if not already present
-                if not any(neigh == u for neigh, _ in adj_map[v]):
-                    adj_map[v].append((u, edata))
 
     # Dijkstra data structures
     distances: Dict[int, float] = {vid: float("inf") for vid in graph.nodes_by_id}
@@ -351,13 +239,10 @@ def dijkstra_shortest_path(
             found = True
             break
 
-        u_node_data = graph.nodes_by_id[u]
-
-        for v, edge_data in adj_map.get(u, []):
+        for v, edge_data in graph.adj.get(u, []):
             if v not in graph.nodes_by_id:
                 continue
-            v_node_data = graph.nodes_by_id[v]
-            step_cost = compute_edge_cost(u_node_data, v_node_data, edge_data, metric=metric, weights=weights)
+            step_cost = compute_edge_cost(edge_data, weights=weights)
 
             new_dist = curr_dist + step_cost
             if new_dist < distances[v]:
@@ -375,7 +260,6 @@ def dijkstra_shortest_path(
             "goal_id": goal_id,
             "start_label": start_node.get("label", f"C{start_id}"),
             "goal_label": goal_node.get("label", f"C{goal_id}"),
-            "metric": metric,
             "total_cost": float("inf"),
             "path_node_ids": [],
             "path_node_labels": [],
@@ -432,7 +316,6 @@ def dijkstra_shortest_path(
         "goal_id": goal_id,
         "start_label": start_node.get("label", f"C{start_id}"),
         "goal_label": goal_node.get("label", f"C{goal_id}"),
-        "metric": metric,
         "total_cost": distances[goal_id],
         "path_node_ids": path_node_ids,
         "path_node_labels": path_node_labels,
@@ -453,33 +336,23 @@ def visualize_decomposition_and_path(
     result: Dict[str, Any],
     output_file: Optional[str] = None,
     show: bool = True,
-    theme: str = "dark",
-    show_all_edges: bool = False,
-    show_labels: bool = True,
     title: Optional[str] = None,
-    dpi: int = 200,
 ) -> plt.Figure:
     """
     Renders an aesthetically superior visualization of the convex decomposition
     and highlights the Dijkstra shortest path taken with rich styling.
     """
-    is_dark = (theme.lower() == "dark")
-
-    # Theme colors
-    bg_color = "#0B0F19" if is_dark else "#F8FAFC"
-    panel_bg = "#151C2C" if is_dark else "#FFFFFF"
-    text_color = "#E2E8F0" if is_dark else "#1E293B"
-    text_muted = "#94A3B8" if is_dark else "#64748B"
-    grid_color = "#1E293B" if is_dark else "#E2E8F0"
-    base_border_color = "#334155" if is_dark else "#CBD5E1"
-    edge_line_color = "#3B82F6" if is_dark else "#60A5FA"
+    # Theme colors (Dark mode)
+    bg_color = "#0B0F19"
+    panel_bg = "#151C2C"
+    text_color = "#E2E8F0"
+    text_muted = "#94A3B8"
+    grid_color = "#1E293B"
+    base_border_color = "#334155"
 
     # Path colors
     start_color = "#10B981"   # Emerald Green
     goal_color = "#EF4444"    # Crimson Red
-    path_fill_color = "#F59E0B"  # Vibrant Amber
-    path_line_color = "#FBBF24"  # Golden Amber
-    path_border_color = "#FFFFFF" if is_dark else "#0F172A"
 
     fig, ax = plt.subplots(figsize=(12, 10), facecolor=bg_color)
     ax.set_facecolor(bg_color)
@@ -506,13 +379,9 @@ def visualize_decomposition_and_path(
 
         # Polygon distinct base color
         r, g, b = get_piece_color(vid)
-        if is_dark:
-            # Subtle tinted dark tone for non-path polygons
-            face_col = (r * 0.5 + 0.1, g * 0.5 + 0.1, b * 0.5 + 0.1, 0.40)
-            edge_col = (r * 0.8, g * 0.8, b * 0.8, 0.60)
-        else:
-            face_col = (r * 0.7 + 0.3, g * 0.7 + 0.3, b * 0.7 + 0.3, 0.45)
-            edge_col = (r * 0.6, g * 0.6, b * 0.6, 0.75)
+        # Subtle tinted dark tone for non-path polygons
+        face_col = (r * 0.5 + 0.1, g * 0.5 + 0.1, b * 0.5 + 0.1, 0.40)
+        edge_col = (r * 0.8, g * 0.8, b * 0.8, 0.60)
 
         poly_patch = MplPoly(
             coords,
@@ -526,34 +395,18 @@ def visualize_decomposition_and_path(
         ax.add_patch(poly_patch)
 
         # Subtle label for background polygons
-        if show_labels:
-            lbl = v.get("label", f"C{vid}")
-            ax.text(
-                centroid[0], centroid[1],
-                lbl,
-                color=text_muted,
-                fontsize=7,
-                ha="center",
-                va="center",
-                alpha=1,
-                zorder=4,
-                fontweight="normal"
-            )
-
-    # 2. Optionally draw all graph connectivity edges
-    if show_all_edges:
-        for u, edges in graph.adj.items():
-            cu = graph.nodes_by_id[u].get("centroid", [0, 0])
-            for v, _ in edges:
-                cv = graph.nodes_by_id[v].get("centroid", [0, 0])
-                ax.plot(
-                    [cu[0], cv[0]], [cu[1], cv[1]],
-                    color=edge_line_color,
-                    linestyle="--",
-                    linewidth=0.7,
-                    alpha=0.25,
-                    zorder=3
-                )
+        lbl = v.get("label", f"C{vid}")
+        ax.text(
+            centroid[0], centroid[1],
+            lbl,
+            color=text_muted,
+            fontsize=7,
+            ha="center",
+            va="center",
+            alpha=1,
+            zorder=4,
+            fontweight="normal"
+        )
 
     # 3. Draw Path Polygons (Foreground Layer with Glow & High Contrast)
     path_len = len(result.get("path_node_ids", []))
@@ -581,7 +434,7 @@ def visualize_decomposition_and_path(
             g_c = 0.75 + 0.15 * (1.0 - prog)
             b_c = 0.85 * (1.0 - prog)
             fill_c = (r_c, g_c, b_c, 0.65)
-            border_c = "#FDE047" if is_dark else "#D97706"
+            border_c = "#FDE047"
             border_w = 2.2
 
         path_poly = MplPoly(
@@ -607,7 +460,7 @@ def visualize_decomposition_and_path(
         ax.text(
             centroid[0], centroid[1],
             f" {badge_text} ",
-            color="#FFFFFF" if is_dark else "#0F172A",
+            color="#FFFFFF",
             fontsize=8 if not (is_start or is_goal) else 9,
             fontweight="bold",
             ha="center",
@@ -632,7 +485,7 @@ def visualize_decomposition_and_path(
             # Draw glowing line backing
             ax.plot(
                 [p1[0], p2[0]], [p1[1], p2[1]],
-                color="#F59E0B" if is_dark else "#D97706",
+                color="#F59E0B",
                 linewidth=5.0,
                 alpha=0.35,
                 zorder=6
@@ -643,7 +496,7 @@ def visualize_decomposition_and_path(
                 (p1[0], p1[1]), (p2[0], p2[1]),
                 arrowstyle="-|>",
                 mutation_scale=16,
-                color="#FFFFFF" if is_dark else "#1E293B",
+                color="#FFFFFF",
                 linewidth=2.4,
                 linestyle="-",
                 zorder=7
@@ -661,7 +514,7 @@ def visualize_decomposition_and_path(
                 mid_x, mid_y,
                 f"c={cost_val:.2f}",
                 fontsize=7,
-                color="#FDE047" if is_dark else "#92400E",
+                color="#FDE047",
                 fontweight="bold",
                 ha="center",
                 va="center",
@@ -686,31 +539,9 @@ def visualize_decomposition_and_path(
 
     ax.tick_params(colors=text_muted, labelsize=8)
 
-    # Title & Metadata
-    decomp_type = graph.decomposition_type
-    base_filename = os.path.basename(graph.filepath) if graph.filepath else "Decomposition Graph"
+    # Title
     main_title = title or f"Dijkstra Shortest Path: {result['start_label']} ➔ {result['goal_label']}"
     plt.suptitle(main_title, fontsize=14, fontweight="bold", color=text_color, y=0.96)
-
-    # Custom Legend
-    # legend_elements = [
-    #     plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=start_color, markersize=10, label=f"Start: {result['start_label']}"),
-    #     plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=goal_color, markersize=10, label=f"Goal: {result['goal_label']}"),
-    #     plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=path_fill_color, markersize=10, label="Path Polygon"),
-    #     plt.Line2D([0], [0], color=path_line_color, linewidth=2.5, label="Shortest Trajectory"),
-    # ]
-    # leg = ax.legend(
-    #     handles=legend_elements,
-    #     loc="lower right",
-    #     facecolor=panel_bg,
-    #     edgecolor=base_border_color,
-    #     fontsize=8.5,
-    #     framealpha=0.92
-    # )
-    # if leg:
-    #     for txt in leg.get_texts():
-    #         txt.set_color(text_color)
-    # leg.set_zorder(12)
 
     plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.94])
 
@@ -718,7 +549,7 @@ def visualize_decomposition_and_path(
         out_dir = os.path.dirname(output_file)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
-        plt.savefig(output_file, dpi=dpi, facecolor=fig.get_facecolor(), edgecolor="none")
+        plt.savefig(output_file, dpi=200, facecolor=fig.get_facecolor(), edgecolor="none")
         print(f"\n[✓] Visualization successfully saved to: {os.path.abspath(output_file)}")
 
     if show:
@@ -735,35 +566,13 @@ def visualize_decomposition_and_path(
 # ==============================================================================
 
 def print_text_report(graph: DecompositionGraph, result: Dict[str, Any]):
-    """Outputs a clean, readable ASCII summary to terminal."""
-    print("=" * 78)
-    print(" DECOMPOSITION GRAPH DIJKSTRA SHORTEST PATH FINDER")
-    print("=" * 78)
-    print(f" Graph File      : {graph.filepath}")
-    print(f" Decomposition   : {graph.decomposition_type}")
-    print(f" Total Polygons  : {len(graph.nodes_by_id)}")
-    print(f" Directed Edges  : {len(graph.edges_data)}")
-    print(f" Cost Metric     : {result['metric']}")
-    print("-" * 78)
-    print(f" Start Polygon   : {result['start_label']} (ID: {result['start_id']})")
-    print(f" Goal Polygon    : {result['goal_label']} (ID: {result['goal_id']})")
-    print("-" * 78)
-
+    """Outputs a concise summary with path sequence and step breakdown."""
     if not result.get("found"):
-        print(f" [✗] RESULT: No valid path exists from {result['start_label']} to {result['goal_label']}.")
-        print(f"     Visited {result['visited_count']} vertices before exhausting reachable components.")
-        print("=" * 78)
+        print(f"No valid path exists from {result['start_label']} to {result['goal_label']}.")
         return
 
-    print(" [✓] RESULT: Shortest Path Found!")
-    print(f" Total Path Cost : {result['total_cost']:.4f}")
-    print(f" Hops (Edges)    : {result['hop_count']}")
-    print(f" Polygons on Path: {len(result['path_node_ids'])}")
-    print(f" Solve Time      : {result['elapsed_ms']:.3f} ms")
-    print("-" * 78)
-    print(" Path Sequence:")
-    print("   " + " ➔ ".join(result["path_node_labels"]))
-    print("-" * 78)
+    print(f"Path Sequence: {' ➔ '.join(result['path_node_labels'])}")
+    print(f"Total Cost   : {result['total_cost']:.4f}\n")
 
     if result.get("path_edges"):
         header = (
@@ -772,7 +581,7 @@ def print_text_report(graph: DecompositionGraph, result: Dict[str, Any]):
             f"{'Step Cost':<10} | {'Cumulative':<10}"
         )
         print(header)
-        print(" " + "-" * 74)
+        print("-" * 75)
         for idx, e in enumerate(result["path_edges"], start=1):
             u_lbl = graph.nodes_by_id[e["from"]].get("label", f"C{e['from']}")
             v_lbl = graph.nodes_by_id[e["to"]].get("label", f"C{e['to']}")
@@ -783,9 +592,7 @@ def print_text_report(graph: DecompositionGraph, result: Dict[str, Any]):
             sc = f"{e['step_cost']:.4f}"
             cc = f"{e['cumulative_cost']:.4f}"
             print(f" {idx:<5} | {u_lbl:<6} ➔ {v_lbl:<6} | {dt:<7} | {ds:<7} | {dc:<7} | {dd:<7} | {sc:<10} | {cc:<10}")
-        print(" " + "-" * 74)
-
-    print("=" * 78)
+        print("-" * 75)
 
 
 # ==============================================================================
@@ -796,33 +603,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Finds and visualizes the shortest path between 2 convex polygons in a decomposition graph using Dijkstra's algorithm."
     )
-    parser.add_argument("graph_json", nargs="?", default="testenv/narrow.poly-ACD.graph.json",
-                        help="Path to the JSON graph file (e.g., testenv/narrow.poly-ACD.graph.json)")
-    parser.add_argument("start", nargs="?", default="C0",
-                        help="Start polygon label or ID (e.g., C0, 0)")
-    parser.add_argument("goal", nargs="?", default="C1",
-                        help="Goal polygon label or ID (e.g., C1, 15)")
-
+    parser.add_argument("graph_json",
+                        help="Path to the JSON graph file (e.g., polygons/hole.poly-ACD.graph.json)")
+    parser.add_argument("start",
+                        help="Start polygon label or ID (e.g., C1, 1)")
+    parser.add_argument("goal",
+                        help="Goal polygon label or ID (e.g., C6, 6)")
     parser.add_argument("-o", "--output", type=str, default=None,
-                        help="Path to save the output visualization image (e.g., path_result.png)")
-    parser.add_argument("-m", "--metric", type=str, default="cost",
-                        choices=["cost", "weight", "d_distance", "d_trav", "d_shape", "d_corridor", "euclidean", "hop"],
-                        help="Edge cost metric to optimize with Dijkstra (default: cost)")
-    parser.add_argument("-t", "--theme", type=str, default="dark",
-                        choices=["dark", "light"],
-                        help="Visualization color theme (dark or light, default: dark)")
-    parser.add_argument("--undirected", action="store_true",
-                        help="Treat graph edges as bidirectional/undirected")
-    parser.add_argument("--show-edges", action="store_true",
-                        help="Draw all graph connectivity edges in the visualization")
-    parser.add_argument("--no-labels", action="store_true",
-                        help="Hide polygon label annotations on the plot")
-    parser.add_argument("--no-show", action="store_true",
-                        help="Do not display interactive matplotlib window")
-    parser.add_argument("--dpi", type=int, default=200,
-                        help="Image resolution DPI for saved figure (default: 200)")
-    parser.add_argument("--list-labels", action="store_true",
-                        help="List all polygon labels in the graph file and exit")
+                        help="Path to save the output visualization image (optional)")
 
     args = parser.parse_args()
 
@@ -834,58 +622,32 @@ def main():
     w_dist = cfg_weights["w_dist"]
     cost_weights = (w_trav, w_shape, w_corr, w_dist)
 
-    if args.metric == "cost":
-        metric_display = f"cost ({w_trav}*d_trav + {w_shape}*d_shape + {w_corr}*d_corr + {w_dist}*d_dist)"
-    else:
-        metric_display = args.metric
-
     # Load graph
     try:
         graph = DecompositionGraph.from_file(args.graph_json)
     except Exception as err:
         sys.exit(f"Error loading graph '{args.graph_json}': {err}")
 
-    # Handle --list-labels
-    if args.list_labels:
-        labels = [graph.nodes_by_id[vid].get("label", f"C{vid}") for vid in sorted(graph.nodes_by_id.keys())]
-        print(f"\nGraph: {args.graph_json} ({graph.decomposition_type})")
-        print(f"Polygons ({len(labels)} total):")
-        for i in range(0, len(labels), 10):
-            print("  " + ", ".join(labels[i:i+10]))
-        return
-
     # Run Dijkstra
     try:
         result = dijkstra_shortest_path(
             graph=graph,
-            start_query=args.start,
-            goal_query=args.goal,
-            metric=args.metric,
-            undirected=args.undirected,
+            start_label=args.start,
+            goal_label=args.goal,
             weights=cost_weights
         )
-        result["metric"] = metric_display
     except Exception as err:
         sys.exit(f"Dijkstra Execution Error: {err}")
 
     # Output text summary
     print_text_report(graph, result)
 
-    # Output file handling: if output not specified and --no-show is active, auto-save default
-    output_path = args.output
-    if not output_path and args.no_show:
-        output_path = "shortest_path.png"
-
     # Visualize
     visualize_decomposition_and_path(
         graph=graph,
         result=result,
-        output_file=output_path,
-        show=not args.no_show,
-        theme=args.theme,
-        show_all_edges=args.show_edges,
-        show_labels=not args.no_labels,
-        dpi=args.dpi
+        output_file=args.output,
+        show=True if not args.output else False,
     )
 
 
