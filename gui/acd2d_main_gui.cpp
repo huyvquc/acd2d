@@ -192,9 +192,7 @@ int main( int argc, char ** argv)
         }
         if(g_saveGraph) {
             string json_file = g_filename + "-" + g_activeGraph.decomposition_type + ".graph.json";
-            string dot_file = g_filename + "-" + g_activeGraph.decomposition_type + ".dot";
             g_activeGraph.exportJSON(json_file);
-            g_activeGraph.exportDOT(dot_file);
         }
 
         if(g_saveDecomposition) save();
@@ -420,9 +418,7 @@ void Keyboard( unsigned char key, int x, int y )
             if (!g_activeGraph.empty()) {
                 g_activeGraph.printSummary(cout);
                 string json_file = g_filename + "-" + g_activeGraph.decomposition_type + ".graph.json";
-                string dot_file = g_filename + "-" + g_activeGraph.decomposition_type + ".dot";
                 g_activeGraph.exportJSON(json_file);
-                g_activeGraph.exportDOT(dot_file);
             } else {
                 cout << "! No active decomposition graph. Decompose polygon first (d/D)." << endl;
             }
@@ -486,7 +482,7 @@ void print_usage(char * name)
 	cout<<left<<setw(offset)<<"-b value:"<<"beta: weight for distance \n";
 	cout<<left<<setw(offset)<<"-no_color:"<<"disable colored polygon rendering\n";
 	cout<<left<<setw(offset)<<"-graph:"<<"generate and print directed weighted graph\n";
-	cout<<left<<setw(offset)<<"-save_graph / -sg:"<<"save graph to JSON (.graph.json) and DOT (.dot)\n";
+	cout<<left<<setw(offset)<<"-save_graph / -sg:"<<"save graph to JSON (.graph.json)\n";
 	cout<<left<<setw(offset)<<"-no_labels:"<<"disable convex labels\n";
 	cout<<left<<setw(offset)<<"-g:"<<"disable OpenGL \n";
 	cout<<left<<setw(offset)<<"-s:"<<"save decomposition (when GUI is disabled) \n";
