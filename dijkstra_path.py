@@ -20,6 +20,7 @@ import colorsys
 import heapq
 import json
 import os
+import re
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -562,17 +563,58 @@ def visualize_decomposition_and_path(
 
 
 # ==============================================================================
+# Area IoU Calculation
+# ==============================================================================
+
+def parse_polygon_id(label: str, graph: DecompositionGraph) -> int:
+    """Parses and validates a polygon label (e.g. 'C1', 'c1', '1') into its integer ID."""
+    s = str(label).strip()
+    if (s.startswith("C") or s.startswith("c")) and s[1:].isdigit():
+        nid = int(s[1:])
+    elif s.isdigit():
+        nid = int(s)
+    else:
+        raise ValueError(f"Invalid polygon label '{label}'. Must be in 'CX' format (e.g., C0, C1).")
+    if nid not in graph.nodes_by_id:
+        raise ValueError(f"Polygon '{label}' (ID {nid}) not found in graph.")
+    return nid
+
+
+def compute_area_iou(graph: DecompositionGraph, path_a_ids: List[int], path_b_ids: List[int]) -> float:
+    """Calculates the geometric area IoU between two polygon sequences."""
+    set_a = set(path_a_ids)
+    set_b = set(path_b_ids)
+    inter_ids = set_a & set_b
+    union_ids = set_a | set_b
+    if not union_ids:
+        return 0.0
+
+    inter_area = sum(float(graph.nodes_by_id[vid].get("area", 0.0)) for vid in inter_ids)
+    union_area = sum(float(graph.nodes_by_id[vid].get("area", 0.0)) for vid in union_ids)
+    return (inter_area / union_area) if union_area > 0.0 else 0.0
+
+
+# ==============================================================================
 # Console Reporting
 # ==============================================================================
 
-def print_text_report(graph: DecompositionGraph, result: Dict[str, Any]):
-    """Outputs a concise summary with path sequence and step breakdown."""
+def print_text_report(
+    graph: DecompositionGraph,
+    result: Dict[str, Any],
+    given_sequence: Optional[List[str]] = None,
+    area_iou: Optional[float] = None
+):
+    """Outputs a concise summary with path sequence, step breakdown, and area IoU if provided."""
     if not result.get("found"):
         print(f"No valid path exists from {result['start_label']} to {result['goal_label']}.")
         return
 
-    print(f"Path Sequence: {' ➔ '.join(result['path_node_labels'])}")
-    print(f"Total Cost   : {result['total_cost']:.4f}\n")
+    print(f"Path Sequence : {' ➔ '.join(result['path_node_labels'])}")
+    print(f"Total Cost    : {result['total_cost']:.4f}")
+    if given_sequence is not None and area_iou is not None:
+        print(f"Given Sequence: {' ➔ '.join(given_sequence)}")
+        print(f"Area IoU      : {area_iou:.4f} ({area_iou * 100:.2f}%)")
+    print()
 
     if result.get("path_edges"):
         header = (
@@ -605,10 +647,10 @@ def main():
     )
     parser.add_argument("graph_json",
                         help="Path to the JSON graph file (e.g., polygons/hole.poly-ACD.graph.json)")
-    parser.add_argument("start",
-                        help="Start polygon label or ID (e.g., C1, 1)")
-    parser.add_argument("goal",
-                        help="Goal polygon label or ID (e.g., C6, 6)")
+    parser.add_argument("regions", nargs="+",
+                        help="Start and goal polygon labels (e.g. C1 C6), or a sequence (e.g. C1 C3 C6)")
+    parser.add_argument("-s", "--sequence", nargs="*", default=None,
+                        help="Given sequence to calculate area IoU against shortest path (optional)")
     parser.add_argument("-o", "--output", type=str, default=None,
                         help="Path to save the output visualization image (optional)")
 
@@ -628,21 +670,57 @@ def main():
     except Exception as err:
         sys.exit(f"Error loading graph '{args.graph_json}': {err}")
 
+    # Parse region arguments
+    raw_tokens = []
+    for t in args.regions:
+        for p in re.split(r'[,➔\->\s]+', t.strip()):
+            if p.strip():
+                raw_tokens.append(p.strip())
+
+    given_sequence = None
+    if args.sequence is not None and len(args.sequence) > 0:
+        seq_tokens = []
+        for t in args.sequence:
+            for p in re.split(r'[,➔\->\s]+', t.strip()):
+                if p.strip():
+                    seq_tokens.append(p.strip())
+        given_sequence = seq_tokens
+        start_label = raw_tokens[0]
+        goal_label = raw_tokens[-1]
+    elif len(raw_tokens) == 2:
+        start_label = raw_tokens[0]
+        goal_label = raw_tokens[1]
+    elif len(raw_tokens) >= 3:
+        start_label = raw_tokens[0]
+        goal_label = raw_tokens[-1]
+        given_sequence = raw_tokens
+    else:
+        sys.exit("Error: Please provide at least start and goal polygon labels (e.g., C1 C6).")
+
     # Run Dijkstra
     try:
         result = dijkstra_shortest_path(
             graph=graph,
-            start_label=args.start,
-            goal_label=args.goal,
+            start_label=start_label,
+            goal_label=goal_label,
             weights=cost_weights
         )
     except Exception as err:
         sys.exit(f"Dijkstra Execution Error: {err}")
 
-    # Output text summary
-    print_text_report(graph, result)
+    # Compute Area IoU if sequence was given
+    area_iou = None
+    if given_sequence:
+        try:
+            seq_ids = [parse_polygon_id(lbl, graph) for lbl in given_sequence]
+            area_iou = compute_area_iou(graph, result.get("path_node_ids", []), seq_ids)
+        except Exception as err:
+            sys.exit(f"Sequence Error: {err}")
 
-    # Visualize
+    # Output text summary
+    print_text_report(graph, result, given_sequence=given_sequence, area_iou=area_iou)
+
+    # Visualize (original visualization untouched)
     visualize_decomposition_and_path(
         graph=graph,
         result=result,
