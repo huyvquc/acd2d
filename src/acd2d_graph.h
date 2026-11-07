@@ -118,10 +118,10 @@ struct GraphEdge {
     int target = 0;             // Index of adjacent convex node
     double shared_length = 0.0; // Shared boundary contact length or overlap measure
     Point2d interface_pt;       // Contact interface midpoint
-    double d_trav = 0.0;        // 1 - normalized(shared_length) in [0, 1]
+    double d_trav = 0.0;        // Traversal cost based on clearance and interface portal in [0, 1]
     double d_shape = 0.0;       // Normalized shape distance ||s_A - s_B||_2 in [0, 1]
-    double d_corridor = 0.0;    // Normalized (1/conn_A + 1/conn_B) in [0, 1]
-    double d_distance = 0.0;    // Normalized (dist(A -> interface -> B)) in [0, 1]
+    double d_corridor = 0.0;    // Obstacle wall fraction: 1.0 - (conn_A + conn_B)/2 in [0, 1]
+    double d_distance = 0.0;    // Proportional physical distance (dist / max_dist) in [0, 1]
 };
 
 struct AABB2D {
@@ -157,8 +157,9 @@ struct GraphNode {
     double diameter = 0.0;      // Maximum Euclidean distance between any pair of vertices
     double compactness = 0.0;   // Perimeter^2 / (4 * pi * Area)
     double connectivity = 0.0;  // Sum of interface lengths / Perimeter
-    double aspect_ratio = 1.0;  // Max eigenvalue / Min eigenvalue of area covariance matrix
-    double clearance = 0.0;     // Shortest Euclidean distance from centroid to obstacle boundary
+    double aspect_ratio = 1.0;  // inradius / diameter in (0, 0.5]
+    double inradius = 0.0;      // Maximum inscribed circle radius (Chebyshev radius)
+    double clearance = 0.0;     // Inradius of the convex polygon
     std::vector<Point2d> vertices; // Boundary vertices of the convex polygon
     AABB2D box;                 // Axis-aligned bounding box
     std::vector<GraphEdge> adj; // Outgoing directed edges
@@ -263,54 +264,111 @@ public:
     }
 
     /**
-     * @brief Computes the area covariance matrix and aspect ratio of a 2D polygon:
-     * Aspect Ratio = lambda_max / lambda_min (where lambda_max, lambda_min are eigenvalues of area covariance).
+     * @brief Computes the Chebyshev radius (inradius) of a 2D convex polygon.
+     * The inradius is the radius of the largest circle that can be inscribed inside the polygon.
+     * Evaluates candidate centers equidistant from edge triplets and validates half-plane feasibility.
      */
-    static double computePolygonAspectRatio(
-        const std::vector<Point2d>& pts,
-        const Point2d& centroid,
-        double area
-    ) {
+    static double computePolygonInradius(const std::vector<Point2d>& pts) {
         int n = static_cast<int>(pts.size());
-        if (n < 3 || area <= 1e-12) return 1.0;
+        if (n < 3) return 0.0;
 
-        double mu_xx = 0.0;
-        double mu_yy = 0.0;
-        double mu_xy = 0.0;
+        // Ensure CCW orientation so inward normals point towards the polygon interior
+        std::vector<Point2d> ccw_pts = pts;
+        double signed_area = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const Point2d& p1 = ccw_pts[i];
+            const Point2d& p2 = ccw_pts[(i + 1) % n];
+            signed_area += (p1[0] * p2[1] - p2[0] * p1[1]);
+        }
+        if (std::abs(signed_area) < 1e-12) return 0.0;
+        if (signed_area < 0.0) {
+            std::reverse(ccw_pts.begin(), ccw_pts.end());
+        }
+
+        // Compute edge inward normals n_i and offsets c_i such that n_i * X >= c_i for interior points
+        struct EdgeHalfplane {
+            double nx, ny, c;
+        };
+        std::vector<EdgeHalfplane> edges;
+        edges.reserve(n);
 
         for (int i = 0; i < n; ++i) {
-            double x1 = pts[i][0] - centroid[0];
-            double y1 = pts[i][1] - centroid[1];
-            double x2 = pts[(i + 1) % n][0] - centroid[0];
-            double y2 = pts[(i + 1) % n][1] - centroid[1];
+            const Point2d& p1 = ccw_pts[i];
+            const Point2d& p2 = ccw_pts[(i + 1) % n];
+            double dx = p2[0] - p1[0];
+            double dy = p2[1] - p1[1];
+            double len = std::sqrt(dx * dx + dy * dy);
+            if (len < 1e-9) continue;
 
-            double cross = x1 * y2 - x2 * y1;
-            mu_xx += (x1 * x1 + x1 * x2 + x2 * x2) * cross;
-            mu_yy += (y1 * y1 + y1 * y2 + y2 * y2) * cross;
-            mu_xy += (2.0 * x1 * y1 + x1 * y2 + x2 * y1 + 2.0 * x2 * y2) * cross;
+            // Inward unit normal for CCW edge: (-dy / len, dx / len)
+            double nx = -dy / len;
+            double ny = dx / len;
+            double c = nx * p1[0] + ny * p1[1];
+            edges.push_back({nx, ny, c});
         }
 
-        if (mu_xx < 0.0 || (mu_xx == 0.0 && mu_yy < 0.0)) {
-            mu_xx = -mu_xx;
-            mu_yy = -mu_yy;
-            mu_xy = -mu_xy;
+        int m = static_cast<int>(edges.size());
+        if (m < 3) return 0.0;
+
+        // Guaranteed lower bound: distance from polygon centroid to all edges
+        Point2d centroid;
+        double area = 0.0;
+        computePolygonCentroidAndArea(ccw_pts, centroid, area);
+        double best_r = 1e30;
+        for (int i = 0; i < m; ++i) {
+            double dist = edges[i].nx * centroid[0] + edges[i].ny * centroid[1] - edges[i].c;
+            if (dist < best_r) best_r = dist;
+        }
+        if (best_r < 0.0) best_r = 0.0;
+
+        // Check candidate centers equidistant from edge triplets (i, j, k)
+        for (int i = 0; i < m; ++i) {
+            for (int j = i + 1; j < m; ++j) {
+                for (int k = j + 1; k < m; ++k) {
+                    double a11 = edges[i].nx - edges[k].nx;
+                    double a12 = edges[i].ny - edges[k].ny;
+                    double b1  = edges[i].c  - edges[k].c;
+
+                    double a21 = edges[j].nx - edges[k].nx;
+                    double a22 = edges[j].ny - edges[k].ny;
+                    double b2  = edges[j].c  - edges[k].c;
+
+                    double det = a11 * a22 - a12 * a21;
+                    if (std::abs(det) < 1e-9) continue;
+
+                    double cx = (b1 * a22 - b2 * a12) / det;
+                    double cy = (a11 * b2 - a21 * b1) / det;
+                    double r = edges[i].nx * cx + edges[i].ny * cy - edges[i].c;
+
+                    if (r <= best_r) continue;
+
+                    // Check feasibility: center must be at distance >= r from all edges
+                    bool feasible = true;
+                    for (int l = 0; l < m; ++l) {
+                        double dist = edges[l].nx * cx + edges[l].ny * cy - edges[l].c;
+                        if (dist < r - 1e-6) {
+                            feasible = false;
+                            break;
+                        }
+                    }
+
+                    if (feasible) {
+                        best_r = r;
+                    }
+                }
+            }
         }
 
-        double sig_xx = mu_xx / (12.0 * area);
-        double sig_yy = mu_yy / (12.0 * area);
-        double sig_xy = mu_xy / (24.0 * area);
+        return best_r;
+    }
 
-        double trace = sig_xx + sig_yy;
-        double diff = sig_xx - sig_yy;
-        double disc = std::sqrt(std::max(0.0, diff * diff + 4.0 * sig_xy * sig_xy));
-
-        double lam_max = (trace + disc) * 0.5;
-        double lam_min = (trace - disc) * 0.5;
-
-        if (lam_min <= 1e-12) {
-            return (lam_max > 1e-12) ? 1e6 : 1.0;
-        }
-        return lam_max / lam_min;
+    /**
+     * @brief Computes aspect ratio of a 2D convex polygon as inradius / diameter.
+     * Bounded in (0.0, 0.5], where 0.5 corresponds to a circle.
+     */
+    static double computePolygonAspectRatio(double inradius, double diameter) {
+        if (diameter <= 1e-9) return 0.0;
+        return inradius / diameter;
     }
 
     /**
@@ -481,7 +539,7 @@ public:
 
         nodes.resize(num_pieces);
 
-        // Step 1: Initialize all vertices / nodes, AABB, area, perimeter, diameter, compactness, aspect_ratio
+        // Step 1: Initialize all vertices / nodes, AABB, area, perimeter, diameter, compactness, inradius, aspect_ratio, clearance
         for (int i = 0; i < num_pieces; ++i) {
             nodes[i].id = i;
             std::stringstream ss;
@@ -492,7 +550,9 @@ public:
             computePolygonCentroidAndArea(pieces[i], nodes[i].centroid, nodes[i].area);
             computePolygonPerimeterAndDiameter(pieces[i], nodes[i].perimeter, nodes[i].diameter);
             nodes[i].compactness = computePolygonCompactness(nodes[i].perimeter, nodes[i].area);
-            nodes[i].aspect_ratio = computePolygonAspectRatio(pieces[i], nodes[i].centroid, nodes[i].area);
+            nodes[i].inradius = computePolygonInradius(pieces[i]);
+            nodes[i].aspect_ratio = computePolygonAspectRatio(nodes[i].inradius, nodes[i].diameter);
+            nodes[i].clearance = nodes[i].inradius;
         }
 
         // Step 2: Determine adjacency using fast AABB pruning and construct directed edges (weight = 0.0)
@@ -523,19 +583,13 @@ public:
             }
         }
 
-        // Step 3: Compute connectivity and clearance for each polygon
-        std::vector<std::vector<Point2d>> effective_obstacles = obstacle_rings;
-        if (effective_obstacles.empty()) {
-            effective_obstacles = pieces; // Fallback: pieces boundaries
-        }
-
+        // Step 3: Compute connectivity for each polygon
         for (int i = 0; i < num_pieces; ++i) {
             double total_interface_len = 0.0;
             for (const auto& e : nodes[i].adj) {
                 total_interface_len += e.shared_length;
             }
             nodes[i].connectivity = (nodes[i].perimeter > 1e-12) ? (total_interface_len / nodes[i].perimeter) : 0.0;
-            nodes[i].clearance = computePointClearance(nodes[i].centroid, effective_obstacles);
         }
 
         // Step 4: Compute normalized edge metrics
@@ -543,11 +597,11 @@ public:
     }
 
     /**
-     * @brief Computes raw normalized edge metric components for all edges in the graph:
-     * - d_trav = normalized(shared_length * min(cl_A, cl_B)) in [0, 1] (benefit type)
-     * - d_shape = normalized(||s_A - s_B||_2) in [0, 1] with s_X = [Area, Diameter, Aspect_Ratio, Compactness] normalized to [0, 1]
-     * - d_corridor = normalized(1/conn_A + 1/conn_B) in [0, 1]
-     * - d_distance = normalized(dist(centroid_A -> interface_pt) + dist(interface_pt -> centroid_B)) in [0, 1]
+     * @brief Computes raw normalized edge metric components for all edges in the graph using Max Scaler:
+     * - d_trav = 1.0 - (shared_length * min(inradius_A, inradius_B)) / max_trav_raw in [0, 1] (benefit type)
+     * - d_shape = ||s_A - s_B||_2 / max_shape_dist in [0, 1] with s_X = [Area, Diameter, Aspect_Ratio, Compactness] / max_features
+     * - d_corridor = 1.0 - 0.5 * (conn_A + conn_B) in [0, 1] (average obstacle wall fraction)
+     * - d_distance = dist(centroid_A -> interface_pt -> centroid_B) / max_dist in [0, 1] (proportional physical Euclidean distance)
      */
     void computeEdgeCosts() {
         int num_pieces = static_cast<int>(nodes.size());
@@ -562,65 +616,43 @@ public:
         }
         if (!has_edges) return;
 
-        // 1. Min/max for individual node shape features: [Area, Diameter, Aspect_Ratio, Compactness]
-        double min_area = 1e30, max_area = -1e30;
-        double min_diam = 1e30, max_diam = -1e30;
-        double min_ar   = 1e30, max_ar   = -1e30;
-        double min_comp = 1e30, max_comp = -1e30;
+        // 1. Max values for individual node shape features: [Area, Diameter, Aspect_Ratio, Compactness]
+        double max_area = -1e30;
+        double max_diam = -1e30;
+        double max_ar   = -1e30;
+        double max_comp = -1e30;
 
         for (const auto& n : nodes) {
-            min_area = std::min(min_area, n.area);
             max_area = std::max(max_area, n.area);
-            min_diam = std::min(min_diam, n.diameter);
             max_diam = std::max(max_diam, n.diameter);
-            min_ar   = std::min(min_ar,   n.aspect_ratio);
             max_ar   = std::max(max_ar,   n.aspect_ratio);
-            min_comp = std::min(min_comp, n.compactness);
             max_comp = std::max(max_comp, n.compactness);
         }
-
-        // Min-Max normalization for Cost-type criteria: (x - min) / (max - min)
-        auto norm_cost = [](double val, double min_v, double max_v) -> double {
-            if (max_v - min_v > 1e-12) {
-                return (val - min_v) / (max_v - min_v);
-            }
-            return 0.0;
-        };
-
-        // Min-Max normalization for Benefit-type criteria: (max - x) / (max - min)
-        auto norm_benefit = [](double val, double min_v, double max_v) -> double {
-            if (max_v - min_v > 1e-12) {
-                return (max_v - val) / (max_v - min_v);
-            }
-            return 0.0;
-        };
 
         struct ShapeVec {
             double a = 0.0, d = 0.0, ar = 0.0, c = 0.0;
         };
         std::vector<ShapeVec> norm_shapes(num_pieces);
         for (int i = 0; i < num_pieces; ++i) {
-            norm_shapes[i].a  = norm_benefit(nodes[i].area, min_area, max_area);
-            norm_shapes[i].d  = norm_cost(nodes[i].diameter, min_diam, max_diam);
-            norm_shapes[i].ar = norm_cost(nodes[i].aspect_ratio, min_ar, max_ar);
-            norm_shapes[i].c  = norm_cost(nodes[i].compactness, min_comp, max_comp);
+            norm_shapes[i].a  = (max_area > 1e-12) ? (nodes[i].area / max_area) : 0.0;
+            norm_shapes[i].d  = (max_diam > 1e-12) ? (nodes[i].diameter / max_diam) : 0.0;
+            norm_shapes[i].ar = (max_ar > 1e-12)   ? (nodes[i].aspect_ratio / max_ar) : 0.0;
+            norm_shapes[i].c  = (max_comp > 1e-12) ? (nodes[i].compactness / max_comp) : 0.0;
         }
 
-        // 2. Collect min and max across all undirected edges (i < j)
-        double min_trav_raw   = 1e30, max_trav_raw   = -1e30;
-        double min_shape_dist = 1e30, max_shape_dist = -1e30;
-        double min_corridor   = 1e30, max_corridor   = -1e30;
-        double min_dist       = 1e30, max_dist       = -1e30;
+        // 2. Collect max values across all undirected edges (i < j)
+        double max_trav_raw   = -1e30;
+        double max_shape_dist = -1e30;
+        double max_dist       = -1e30;
 
         for (int i = 0; i < num_pieces; ++i) {
             for (const auto& e : nodes[i].adj) {
                 int j = e.target;
-                if (i >= j) continue; // process each undirected edge once for min/max
+                if (i >= j) continue; // process each undirected edge once for max
 
-                // Traversal term: shared_length * min(cl_A, cl_B)
-                double min_cl = std::min(nodes[i].clearance, nodes[j].clearance);
-                double trav_raw = e.shared_length * min_cl;
-                min_trav_raw = std::min(min_trav_raw, trav_raw);
+                // Traversal term: shared_length * min(inradius_A, inradius_B)
+                double min_inrad = std::min(nodes[i].inradius, nodes[j].inradius);
+                double trav_raw = e.shared_length * min_inrad;
                 max_trav_raw = std::max(max_trav_raw, trav_raw);
 
                 // Shape distance ||s_A - s_B||_2
@@ -629,54 +661,43 @@ public:
                 double dar = norm_shapes[i].ar - norm_shapes[j].ar;
                 double dc  = norm_shapes[i].c  - norm_shapes[j].c;
                 double shape_dist = std::sqrt(da * da + dd * dd + dar * dar + dc * dc);
-                min_shape_dist = std::min(min_shape_dist, shape_dist);
                 max_shape_dist = std::max(max_shape_dist, shape_dist);
-
-                // Corridor term (1/conn_A + 1/conn_B)
-                double conn_a = std::max(nodes[i].connectivity, 1e-6);
-                double conn_b = std::max(nodes[j].connectivity, 1e-6);
-                double corr_raw = (1.0 / conn_a) + (1.0 / conn_b);
-                min_corridor = std::min(min_corridor, corr_raw);
-                max_corridor = std::max(max_corridor, corr_raw);
 
                 // Path distance centroid_A -> interface_pt -> centroid_B
                 double d1 = (nodes[i].centroid - e.interface_pt).norm();
                 double d2 = (e.interface_pt - nodes[j].centroid).norm();
                 double dist_raw = d1 + d2;
-                min_dist = std::min(min_dist, dist_raw);
                 max_dist = std::max(max_dist, dist_raw);
             }
         }
 
-        // 3. Compute normalized component costs and final symmetric cost
+        // 3. Compute normalized component costs using Max Scalers
         for (int i = 0; i < num_pieces; ++i) {
             for (auto& e : nodes[i].adj) {
                 int j = e.target;
 
-                // d_trav: benefit type, (max - x) / (max - min) on (shared_length * min(cl_A, cl_B))
-                double min_cl = std::min(nodes[i].clearance, nodes[j].clearance);
-                double trav_raw = e.shared_length * min_cl;
-                e.d_trav = norm_benefit(trav_raw, min_trav_raw, max_trav_raw);
+                // d_trav: benefit type, 1.0 - (trav_raw / max_trav_raw)
+                double min_inrad = std::min(nodes[i].inradius, nodes[j].inradius);
+                double trav_raw = e.shared_length * min_inrad;
+                e.d_trav = (max_trav_raw > 1e-12) ? (1.0 - (trav_raw / max_trav_raw)) : 0.0;
 
-                // d_shape: cost type, (x - min) / (max - min)
+                // d_shape: cost type, shape_dist / max_shape_dist
                 double da  = norm_shapes[i].a  - norm_shapes[j].a;
                 double dd  = norm_shapes[i].d  - norm_shapes[j].d;
                 double dar = norm_shapes[i].ar - norm_shapes[j].ar;
                 double dc  = norm_shapes[i].c  - norm_shapes[j].c;
                 double shape_dist = std::sqrt(da * da + dd * dd + dar * dar + dc * dc);
-                e.d_shape = norm_cost(shape_dist, min_shape_dist, max_shape_dist);
+                e.d_shape = (max_shape_dist > 1e-12) ? (shape_dist / max_shape_dist) : 0.0;
 
-                // d_corridor: cost type, (x - min) / (max - min)
-                double conn_a = std::max(nodes[i].connectivity, 1e-6);
-                double conn_b = std::max(nodes[j].connectivity, 1e-6);
-                double corr_raw = (1.0 / conn_a) + (1.0 / conn_b);
-                e.d_corridor = norm_cost(corr_raw, min_corridor, max_corridor);
+                // d_corridor: average obstacle wall fraction 1.0 - (conn_A + conn_B) / 2.0
+                double avg_conn = 0.5 * (nodes[i].connectivity + nodes[j].connectivity);
+                e.d_corridor = std::max(0.0, std::min(1.0, 1.0 - avg_conn));
 
-                // d_distance: cost type, (x - min) / (max - min)
+                // d_distance: proportional Euclidean distance without offset subtraction: dist_raw / max_dist
                 double d1 = (nodes[i].centroid - e.interface_pt).norm();
                 double d2 = (e.interface_pt - nodes[j].centroid).norm();
                 double dist_raw = d1 + d2;
-                e.d_distance = norm_cost(dist_raw, min_dist, max_dist);
+                e.d_distance = (max_dist > 1e-12) ? (dist_raw / max_dist) : 0.0;
             }
         }
     }
@@ -711,6 +732,7 @@ public:
                << ", Diam=" << std::setprecision(4) << n.diameter
                << ", Compact=" << std::setprecision(4) << n.compactness
                << ", Connect=" << std::setprecision(4) << n.connectivity
+               << ", InRad=" << std::setprecision(4) << n.inradius
                << ", AR=" << std::setprecision(4) << n.aspect_ratio
                << ", Clear=" << std::setprecision(4) << n.clearance
                << ", Vertices=" << n.vertices.size() << "\n";
@@ -760,6 +782,7 @@ public:
             fout << "      \"diameter\": " << n.diameter << ",\n";
             fout << "      \"compactness\": " << n.compactness << ",\n";
             fout << "      \"connectivity\": " << n.connectivity << ",\n";
+            fout << "      \"inradius\": " << n.inradius << ",\n";
             fout << "      \"aspect_ratio\": " << n.aspect_ratio << ",\n";
             fout << "      \"clearance\": " << n.clearance << ",\n";
             fout << "      \"polygon\": [";
