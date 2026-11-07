@@ -22,7 +22,6 @@ namespace acd2d
 	///////////////////////////////////////////////////////////////////////////////
 	inline cd_vertex * next(cd_vertex * v)
 	{
-		if( v == NULL ) return NULL;
 		if( v->getBridge()==NULL ) 
 			return v->getNext();
 		else
@@ -41,10 +40,9 @@ namespace acd2d
 	inline void updateHullTop(cd_vertex * v,list<cd_vertex*>& hull)
 	{
 		typedef list<cd_vertex*>::iterator VIT;
-		if( hull.size() <= 1 || v == NULL ) return;
+		if( hull.size()==1 ) return;
 		VIT l1=hull.end(); l1--;
 		VIT l2=l1; l2--;
-		if( *l1 == NULL || *l2 == NULL ) return;
 		if( turn_left((*l2)->getPos(),(*l1)->getPos(),v->getPos()) )
 			return;
 		hull.pop_back();
@@ -55,10 +53,9 @@ namespace acd2d
 	inline void updateHullBot(cd_vertex * v,list<cd_vertex*>& hull)
 	{
 		typedef list<cd_vertex*>::iterator VIT;
-		if( hull.size() <= 1 || v == NULL ) return;
+		if( hull.size()==1 ) return;
 		VIT b1=hull.begin();
 		VIT b2=b1; b2++;
-		if( *b1 == NULL || *b2 == NULL ) return;
 		if( turn_left((*b1)->getPos(),(*b2)->getPos(),v->getPos()) )
 			return;
 		hull.pop_front();
@@ -68,42 +65,33 @@ namespace acd2d
 	//check if v is inside the hull
 	inline bool inHull(cd_vertex * v,list<cd_vertex*>& hull )
 	{
-		if( hull.size() < 2 || v == NULL ) return false;
 		typedef list<cd_vertex*>::iterator VIT;
 		VIT t1=hull.end(); t1--;
 		VIT t2=t1; t2--;
-		if( *t1 == NULL || *t2 == NULL ) return false;
 		if( !turn_left((*t2)->getPos(),(*t1)->getPos(),v->getPos()) )
 			return false;
 	
 		VIT b1=hull.begin();
 		VIT b2=b1; b2++;
-		if( *b1 == NULL || *b2 == NULL ) return false;
 		return turn_left((*b1)->getPos(),(*b2)->getPos(),v->getPos());
 	}
 	
 	//e mush be reachable from s
 	void hull2d(cd_vertex * s, cd_vertex * e, list<cd_vertex*>& hull )
 	{
-		if( s == NULL || e == NULL ) return;
 		//avoid letting s and e in the bridge
 		if( s->getBridge()!=NULL ) s=s->getBridge()->v2;
 		if( e->getBridge()!=NULL ) e=e->getBridge()->v1;
-		if( s == NULL || e == NULL ) return;
-		cd_vertex * ns = next(s);
-		if( ns == NULL ) return;
 		cd_vertex * ne=next(e);
 	
 		//init the hull
 		hull.push_back(s);
-		hull.push_back(ns);
+		hull.push_back(next(s));
 		hull.push_front(hull.back());
 	
 		//incrementally create the hull
 		cd_vertex * ptr=next(hull.back());
-		int count = 0;
-		while(ptr != NULL && ptr != ne && count < 10000){
-			count++;
+		while(ptr!=ne){
 			//check if the ptr is contained in the hull
 			if( !inHull(ptr,hull) ){
 				updateHullTop(ptr,hull);
@@ -113,7 +101,7 @@ namespace acd2d
 			}
 			ptr=next(ptr);
 		}//while(ptr!=ne);
-		if (!hull.empty()) hull.pop_back();
+		hull.pop_back();
 	}
 
 }//namespace acd2d

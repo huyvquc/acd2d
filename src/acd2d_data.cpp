@@ -4,7 +4,6 @@
 //------------------------------------------------------------------------------
 
 #include <float.h>
-#include <set>
 #include "acd2d_data.h"
 #include "acd2d_util.h"
 #include "acd2d_eigen.h"
@@ -19,11 +18,7 @@ namespace acd2d
 	
 	cd_vertex::~cd_vertex()
 	{
-		if (bridge != NULL) {
-			if (bridge->v1 == this) bridge->v1 = NULL;
-			if (bridge->v2 == this) bridge->v2 = NULL;
-			bridge = NULL;
-		}
+		removeBridge(this); 
 	}
 	
 	void cd_vertex::computeNormal()
@@ -31,15 +26,13 @@ namespace acd2d
 		normal=acd2d::computeNormal(next->pos-pos);
 	}
 	
-	Point2d cd_vertex::computeClosePt(const Point2d& p)
+	Point2d cd_vertex::computeClosePt(const Point2d& pos)
 	{
-		Vector2d vec = (next->pos - this->pos);
-		double len_sqr = vec * vec;
-		if (len_sqr < 1e-12) return this->pos;
-		double t = ((p - this->pos) * vec) / len_sqr;
-		if (t < 0) t = 0;
-		else if (t > 1) t = 1;
-		return this->pos + t * vec;
+		Vector2d vec=(next->pos-pos);
+		double t= ((pos-this->pos)*vec)/(vec*vec);
+		if( t<0 ) t=0;
+		else if(t>1) t=1;
+		return this->pos+t*vec;
 	}
 	
 	double cd_vertex::computeDist(const Point2d& pos)
@@ -62,24 +55,34 @@ namespace acd2d
 		if( this==l.support ){ up=pre->up; return;}
 		double d=(pos-l.origin)*l.normal;
 		if( d>1e-10 )
-			up=true;
+			up=1;
 		else if( d<-1e-10 )
-			up=false;
+			up=-1;
 		else{
-			up=!pre->up;
+			up=0;
 		}
 	}
 	
 	void cd_vertex::Intersect(const cd_line& l)
 	{
-		double t=((l.origin-pos)*l.normal)/((next->pos-pos)*l.normal);
+		double t;
+		Vector2d vec = next->pos - pos;
+
+		double slseg = vec*l.normal;
+		if (slseg >= -1e-10 && slseg <= 1e-10)
+			t = std::max(0.0, std::min(1.0, vec[0] > vec[1] ? (l.origin[0] - pos[0])/vec[0]
+															: (l.origin[1] - pos[1])/vec[1]));
+		else
+			t = abs(l.vec[0]) > abs(l.vec[1]) ?
+					((l.origin[1] - pos[1]) - (l.origin[0] - pos[0])*l.vec[1]/l.vec[0])/(vec[1] - vec[0]*l.vec[1]/l.vec[0])
+				  : ((l.origin[0] - pos[0]) - (l.origin[1] - pos[1])*l.vec[0]/l.vec[1])/(vec[0] - vec[1]*l.vec[0]/l.vec[1]);
 		inter.set((1-t)*pos[0]+t*next->pos[0],(1-t)*pos[1]+t*next->pos[1]);
 	}
 	
 	bool cd_vertex::isIntersect(const cd_line& l)
 	{
 		next->computeUp(l);
-		if( up!=next->up ){
+		if( up != 0 && up!=next->up || (up == 0 && next->up == 0 && (next->pos - l.origin).normsqr() < (pos - l.origin).normsqr()) ){
 			Intersect(l);
 			//compute the i
 			Vector2d v=inter-l.origin;
@@ -87,6 +90,9 @@ namespace acd2d
 			if(v*l.vec<0) u=-u;
 			return true;
 		}
+		else if (this == l.support)
+			Intersect(l); //find inters in the case that it wasn't found (pre of cut_l.support colinear with cut_l)
+
 		return false;
 	}
 	
@@ -122,20 +128,12 @@ namespace acd2d
 	void cd_poly::destroy()
 	{
 		if( head==NULL ) return;
-		list<cd_bridge*> bridges;
-		getBridges(bridges);
-		for (auto b : bridges) {
-			delete b;
-		}
 		cd_vertex* ptr=head;
-		int count = 0;
 		do{
 			cd_vertex * n=ptr->getNext();
-			ptr->setBridge(NULL);
 			delete ptr;
 			ptr=n;
-			count++;
-		}while( ptr!=NULL && ptr!=head && count < size + 10 );
+		}while( ptr!=head );
 		head=tail=NULL;
 	}
 	
@@ -237,22 +235,6 @@ namespace acd2d
 	void cd_poly::findMaxNotch(IConcavityMeasure * measure)
 	{   
 		if( type!=POUT ) cerr<<"! ERROR: findMaxNotch Error"<<endl;
-		cd_vertex* ptr = head;
-		if (ptr != NULL) {
-			std::set<cd_bridge*> to_del;
-			int count = 0;
-			do {
-				if (ptr->getBridge() != NULL) {
-					to_del.insert(ptr->getBridge());
-					ptr->setBridge(NULL);
-				}
-				ptr = ptr->getNext();
-				count++;
-			} while (ptr != NULL && ptr != head && count < size + 10);
-			for (std::set<cd_bridge*>::iterator it = to_del.begin(); it != to_del.end(); ++it) {
-				delete *it;
-			}
-		}
 		///////////////////////////////////////////////////////////////////////////
 		construct_bridges(head,tail);
 		///////////////////////////////////////////////////////////////////////////
@@ -264,7 +246,7 @@ namespace acd2d
 		for( BIT ib=bridges.begin();ib!=bridges.end(); ib++ ){
 			cd_bridge * b=*ib;
 			if( b->max_r==NULL ) b->FindMaxR(measure); //find max_r
-			if( b->max_r==NULL || !b->max_r->isReflex() ) continue; //?? wierd, still null...:-<
+			if( b->max_r==NULL ) continue; //?? wierd, still null...:-<
 			if( r==NULL ) r=b->max_r;
 			else if(r->getConcavity()<b->max_r->getConcavity())
 				r=b->max_r;
@@ -501,15 +483,10 @@ namespace acd2d
 	{
 		typedef list<cd_vertex*>::iterator VIT;
 	
-		Vector2d dir = p2 - p1;
-		double dist = dir.norm();
-		if (dist < 1e-10) return;
-		dir = dir.normalize();
-
 		cd_line line;
-		line.origin = p1;
-		line.vec = dir;
-		line.normal.set(-dir[1], dir[0]);
+		line.origin=p1;
+		line.vec=(p2-p1).normalize();
+		line.normal.set(-line.vec[1],line.vec[0]);
 	
 		for( DIT id=m_DependList.begin();id!=m_DependList.end();id++ ){
 			if( (*id)==pDG ) continue;
@@ -517,7 +494,7 @@ namespace acd2d
 			(*id)->m_host.findCollEdges(cd,line);
 			if( cd.empty() ) continue;
 			for(VIT i=cd.begin();i!=cd.end();i++){
-				if( (*i)->getU() > 1e-5 && (*i)->getU() < dist - 1e-5 ){
+				if( (*i)->getU()>0 ){
 					pDG->m_depend_on.push_back(*id);
 					(*id)->m_depend_by.push_back(pDG);
 					break;

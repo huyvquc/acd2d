@@ -8,6 +8,7 @@
 
 #include "acd2d_data.h"
 #include "acd2d_bridge.h"
+#include "acd2d_dir.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -22,42 +23,37 @@
 namespace acd2d
 {
 	
-	inline cd_vertex* checkDegeneracy(cd_vertex* v1)
+	inline void checkDegeneracy(cd_vertex* v1)
 	{
 		cd_vertex * v=v1;
-		if (v == NULL) return NULL;
 	   
-		if( v->getNext() != NULL && v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
+		if( v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
 			cd_vertex * dup=v->getNext();
 			v->setNext(dup->getNext());
-			removeBridge(dup);
 			delete dup;
 		}
-		else {
-			v=v->getNext();
-		}
+		else v=v->getNext();
 		
-		if( v != NULL && v->getNext() != NULL && v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
+		if( v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
 			cd_vertex * dup=v->getNext();
 			v->setNext(dup->getNext());
-			removeBridge(dup);
 			delete dup;
 		}
-		else if (v != NULL) {
-			v=v->getNext();
-		}
+		else v=v->getNext();
 		
-		if( v != NULL && v->getNext() != NULL && v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
-			cd_vertex * prev = v->getPre();
-			cd_vertex * next = v->getNext();
-			if (prev != NULL) {
-				prev->setNext(next);
-				removeBridge(v);
-				delete v;
-				return prev;
-			}
+		if( v->getPos().almost_equ(v->getNext()->getPos()) ){ //dup
+			v->getPre()->setNext(v->getNext());
+			delete v;
 		}
-		return v1;
+	}
+	
+	/**
+	 * remove duplicate nodes.
+	 */
+	inline void checkDegeneracy(cd_vertex* v1, cd_vertex * v2)
+	{
+		checkDegeneracy(v1);
+		checkDegeneracy(v2);
 	}
 	
 	/**
@@ -66,30 +62,29 @@ namespace acd2d
 	 */
 	inline void updateInfo(cd_vertex* v)
 	{
-		if (v == NULL) return;
-		cd_vertex* cur = v;
-		for( int i=0; i<4; i++ ){
-			if (cur == NULL) break;
-			cur->computeNormal();
-			cur->computeReflex();
-			if( !cur->isReflex() )
-				cur->setConcavity(0);
-			cur=cur->getNext();
+		for( int i=0;i<4;i++ ){
+			v->computeNormal();
+			v->computeReflex();
+			if( !v->isReflex() )
+				v->setConcavity(0);
+			v=v->getNext();
 		}
 	}
 	
 	/**
 	 * split edges in the cut.
 	 */
-	inline void addDiagnal( cd_vertex* & v1, cd_vertex* & v2 )
+	inline void addDiagnal( cd_vertex* v1, cd_vertex * v2, bool usePadding = false )
 	{
 		cd_vertex * v1n=v1->getNext();
 		cd_vertex * v2n=v2->getNext();
 		
-		cd_vertex * n11=new cd_vertex(v1->getInterPt());
-		cd_vertex * n12=new cd_vertex(v1->getInterPt());
-		cd_vertex * n21=new cd_vertex(v2->getInterPt());
-		cd_vertex * n22=new cd_vertex(v2->getInterPt());
+		const auto &v1ipt = v1->getInterPt();
+		const auto &v2ipt = v2->getInterPt();
+		cd_vertex * n11=new cd_vertex(v1ipt);
+		cd_vertex * n12=new cd_vertex(v1ipt);
+		cd_vertex * n21=new cd_vertex(v2ipt);
+		cd_vertex * n22=new cd_vertex(v2ipt);
 		
 		v1->setNext(n11);
 		n11->setNext(n22);
@@ -99,10 +94,23 @@ namespace acd2d
 		n21->setNext(n12);
 		n12->setNext(v1n);
 		
-		v1 = checkDegeneracy(v1);
-		v2 = checkDegeneracy(v2);
-		if (v1 != NULL) updateInfo(v1);
-		if (v2 != NULL) updateInfo(v2);
+		checkDegeneracy(v1,v2);
+		if (usePadding) {
+			// printf("v1: %lf %lf, v2: %lf %lf\n", v1->getPos()[0], v1->getPos()[1], v2->getPos()[0], v2->getPos()[1]);
+
+			v2n = v2->getNext();
+			v2n->setPos(v2n->getPos() + (v2->getPos() - v2n->getPos()).normalize()*1e-5);
+			v1n = v1->getNext();
+			cd_vertex * v1nn=v1n->getNext();
+			v1n->setPos(v1n->getPos() + (v1nn->getPos() - v1n->getPos()).normalize()*1e-5);
+			cd_vertex * v1p=v1->getPre();
+			v1->setPos(v1->getPos() + (v1p->getPos() - v1->getPos()).normalize()*1e-5);
+			cd_vertex * v2nn=v2n->getNext();
+			cd_vertex * v2nnn=v2nn->getNext();
+			v2nn->setPos(v2nn->getPos() + (v2nnn->getPos() - v2nn->getPos()).normalize()*1e-5);
+		}
+		updateInfo(v1);
+		updateInfo(v2);
 	}
 	
 	///////////////////////////////////////////////////////////////////////////////
@@ -112,41 +120,6 @@ namespace acd2d
 	///////////////////////////////////////////////////////////////////////////////
 	
 	
-	inline bool is_cut_valid_for_edge(cd_vertex* cur, const Point2d& inter, const Point2d& cut_origin)
-	{
-		Vector2d v_cut = cut_origin - inter;
-		if (v_cut.normsqr() < 1e-12) return false;
-		
-		cd_vertex* v_next = cur->getNext();
-		if (v_next == NULL) return false;
-		
-		Vector2d e_in, e_out;
-		if ((inter - v_next->getPos()).normsqr() < 1e-8) {
-			cd_vertex* v_nn = v_next->getNext();
-			if (v_nn == NULL) return false;
-			e_in = v_next->getPos() - cur->getPos();
-			e_out = v_nn->getPos() - v_next->getPos();
-		} else if ((inter - cur->getPos()).normsqr() < 1e-8) {
-			cd_vertex* v_pre = cur->getPre();
-			if (v_pre == NULL) return false;
-			e_in = cur->getPos() - v_pre->getPos();
-			e_out = v_next->getPos() - cur->getPos();
-		} else {
-			e_in = v_next->getPos() - cur->getPos();
-			e_out = e_in;
-		}
-		
-		double cross_corner = e_in[0] * e_out[1] - e_in[1] * e_out[0];
-		double cross_in = e_in[0] * v_cut[1] - e_in[1] * v_cut[0];
-		double cross_out = e_out[0] * v_cut[1] - e_out[1] * v_cut[0];
-		
-		if (cross_corner >= -1e-8) {
-			return (cross_in >= -1e-7 && cross_out >= -1e-7);
-		} else {
-			return (cross_in >= -1e-7 || cross_out >= -1e-7);
-		}
-	}
-
 	/**
 	 * Find the edges that will split the out most chain
 	 */
@@ -161,29 +134,34 @@ namespace acd2d
 		cd_vertex* closest=NULL;
 		for( VIT iv=coll.begin();iv!=coll.end();iv++){
 			cd_vertex* cur=*iv;
-			if( cur==cut_l.support ) continue;
-			if( cur==cut_l.support->getPre() ) continue;
-			if( cur->getU()<-1e-5 ) continue;
-			
-			bool valid = is_cut_valid_for_edge(cur, cur->getInterPt(), cut_l.origin);
-			
-			if( cur->getU() < min_U - 1e-4 ){
-				min_U = cur->getU();
-				closest = cur;
-			}
-			else if( fabs(cur->getU() - min_U) <= 1e-4 ){
-				bool prev_valid = (closest != NULL && is_cut_valid_for_edge(closest, closest->getInterPt(), cut_l.origin));
-				if( valid && !prev_valid ){
-					closest = cur;
-					min_U = cur->getU();
-				}
+			if( cur == cut_l.support || cur->getPos()==cut_l.support->getPos())continue;
+			if( cur==cut_l.support->getPre() || cur->getNext()->getPos()==cut_l.support->getPos())continue;
+			//commented out since this is not problem anymore when hole merge padding is used + it caused crash for error_boundaries.poly
+			// if( !isInBoundaries(cur->getNext(), cut_l.support))continue; //don't pick the wrong point of a hole connection duplicate
+			if( cur->getU()<-1e-5 )continue;
+			if( cur->getU()<min_U ){
+				min_U=cur->getU();
+				closest=cur;
 			}
 		}
 	
 		if(closest!=NULL) 
 			return pair<cd_vertex*,cd_vertex*>(cut_l.support,closest);
 	
-		return pair<cd_vertex*,cd_vertex*>(NULL, NULL);
+		{//ERROR
+			cerr<<"! ERROR: FindCut_Out Error\n";
+			for( VIT iv=coll.begin();iv!=coll.end();iv++){
+				cd_vertex* cur=*iv;
+				cout<<"! ERROR Info: U="<<cur->getU()<<"\n";
+			}
+			cerr<<"! ERROR Info: Cut line O=("
+				<<cut_l.origin[0]<<","<<cut_l.origin[1]<<")\n"
+				<<"! ERROR Info: Cut line V=("
+				<<cut_l.vec[0]<<","<<cut_l.vec[1]<<")\n";
+			cerr<<"! ERROR Info: Polygon=\n"
+				<<poly<<endl;
+			exit(1);
+		}
 	}
 	
 	/**
@@ -196,9 +174,6 @@ namespace acd2d
 		pair<cd_vertex*, cd_vertex*> cut = FindCut_Out(poly,cut_l);
 		cd_vertex * v1=cut.first;
 		cd_vertex * v2=cut.second;
-		if (v1 == NULL || v2 == NULL) {
-			return cd_diagonal(poly.getHead()->getPos(), poly.getHead()->getPos());
-		}
 	
 		cd_vertex * nv1=v1->getNext();
 		cd_vertex * nv2=v2->getNext();
@@ -234,6 +209,8 @@ namespace acd2d
         for(auto v : coll )
         {
 			if( v->getU()<0 ) continue; //not in the right dir
+			//commented out since this is not problem anymore when hole merge padding is used + it caused crash for error_boundaries.poly
+			// if( !isInBoundaries(v->getNext(), cut_l.support))continue; //don't pick the wrong point of a hole connection duplicate
 			if( v->getU()<min_u ){ 
 				min_u=v->getU();
 				min_v=v;
@@ -243,7 +220,8 @@ namespace acd2d
 		if( min_v!=NULL )
 			return pair<cd_vertex*,cd_vertex*> (cut_l.support,min_v);
 
-		return pair<cd_vertex*,cd_vertex*>(NULL, NULL);
+		cerr<<"! ERROR: FindCut_In Error"<<endl;
+		exit(1);
 	}
 	
 	inline cd_diagonal
@@ -254,18 +232,10 @@ namespace acd2d
 		pair<cd_vertex*, cd_vertex*> cut = FindCut_In(out,hole,cut_l);
 		v1=cut.first;
 		v2=cut.second;
-		if (v1 == NULL || v2 == NULL) {
-			v1 = cut_l.support ? cut_l.support : hole.getHead();
-			v2 = out.getHead();
-		} else {
-			v1->Intersect(cut_l);
-		}
-		if (v1 != NULL && v2 != NULL) {
-			addDiagnal(v1,v2);
-			out.updateSize();
-			return cd_diagonal(v1->getPos(),v2->getPos());
-		}
-		return cd_diagonal(hole.getHead()->getPos(), hole.getHead()->getPos());
+		v1->Intersect(cut_l);
+		addDiagnal(v1,v2, true);
+		out.updateSize();
+		return cd_diagonal(cut.first->getInterPt(),cut.second->getInterPt());
 	}
 }//namespace acd2d
 
